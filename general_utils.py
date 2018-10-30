@@ -167,3 +167,8 @@ def remove_gene_version(gene_ids):
     """
     gene_ids = np.array(list(map(lambda x: re.sub(r'\..*$','', x),gene_ids)))
     return gene_ids
+
+def make_nan_array(num_rows,num_cols):
+    nan_array = np.empty((num_rows,num_cols))
+    nan_array.fill(np.nan)
+    return nan_array

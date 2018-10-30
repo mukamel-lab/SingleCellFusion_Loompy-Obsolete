@@ -13,6 +13,10 @@ from scipy import sparse
 import functools
 import re
 import logging
+import tempfile
+import os
+import gc
+
 from . import general_utils
 from . import loom_utils
 from . import graphs
@@ -215,65 +219,37 @@ def find_common_features(loom_x,
             common_x = np.sum(ds.ra[out_attr])
         logger.info('Found {} features in common'.format(common_x))
         
-def view_corrcoef(ds_x,
-                  view_x,
-                  layer_x,
-                  corr_x,
-                  col_x,
-                  row_x,
-                  sel_x,
-                  ds_y,
-                  view_y,
-                  layer_y,
-                  corr_y,
-                  col_y,
-                  row_y,
-                  sel_y,
-                  direction):
-    """
-    Calculates correlation coefficients between two loompy view objects
-    
-    Args:
-        ds_x (loompy object): Handle of loompy file
-        view_x (loompy object): View from a loompy file
-        layer_x (str): Layer of desired counts for correlation in x
-        corr_x (str): Name of output correlation attribute
-        col_x (array): Boolean array of columns to include in x
-        row_x (array): Boolean array of rows to include in x
-        sel_x (array): Columns to include from col_x
-        ds_y (loompy object): Handle of loompy file
-        view_y (loompy object): View from a loompy file
-        layer_y (str): Layer of desired counts for correlation in y
-        corr_y (str): Name of output correlation attribute
-        col_y (array): Boolean array of columns to include in y
-        row_y (array): Boolean array of rows to include in y
-        sel_y (array): Columns to include from col_y
-        direction (str): Direction of expected correlation
-            negative/- or positive/+
-    
-    Uses code written by dbliss on StackOverflow
-        https://stackoverflow.com/questions/30143417/
-    
-    Update with batch add
-    """
-    # Get number of cells
-    num_x = ds_x.shape[1]
-    num_y = ds_y.shape[1]
-    # Handle columns
-    col_x = col_x[sel_x]
-    col_y = col_y[sel_y]
-    # Get data
-    dat_x = view_x.layers[layer_x][:,col_x][row_x,:].T
-    dat_y = view_y.layers[layer_y][:,col_y][row_y,:].T
-    # Get ranks
-    dat_x = pd.DataFrame(dat_x).rank(pct = True, axis = 1).values
-    dat_y = pd.DataFrame(dat_y).rank(pct = True, axis = 1).values
-    if direction == '+' or direction == 'positive':
-        pass
-    elif direction == '-' or direction == 'negative':
-        dat_x = 1 - dat_x
-    else:
-        raise ValueError('Unsupported direction value ({})'.format(direction))
+def add_distances_for_mnn(coeff,
+        self_index,
+        other_index,
+        k,
+        dist_vals,
+        idx_vals):
+    knn = ((-coeff).rank(axis=1,method = 'first') <= k).values.astype(bool)
+    new_idx = other_index[np.where(knn)[1]]
+    new_dist = coeff.values[knn]
+    new_idx = np.reshape(new_idx,
+                         newshape = (coeff.shape[0],k))
+    new_dist = np.reshape(new_dist,
+                          newshape = (coeff.shape[0],k))
+    old_dist = dist_vals[self_index,:]
+    old_idx = idx_vals[self_index,:]
+    comb_dist = np.hstack([old_dist,new_dist])
+    comb_idx = np.hstack([old_idx,new_idx])
+    knn_comb = (pd.DataFrame(-comb_dist).rank(axis=1,
+                                 method = 'first') <= k).values.astype(bool)
+    comb_dist = comb_dist[knn_comb]
+    comb_idx = comb_idx[knn_comb]
+    comb_dist = np.reshape(comb_dist,
+                           newshape = (coeff.shape[0],k))
+    comb_idx = np.reshape(comb_idx,
+                           newshape = (coeff.shape[0],k))
+    idx_vals[self_index,:] = comb_idx
+    dist_vals[self_index,:] = comb_dist
+    return dist_vals, idx_vals
+
+def generate_coefficients(dat_x,
+        dat_y): 
     # Get number of features
     if dat_x.shape[1] == dat_y.shape[1]:
         n = dat_x.shape[1]
@@ -283,38 +259,36 @@ def view_corrcoef(ds_x,
     mean_x = dat_x.mean(axis = 1)
     mean_y = dat_y.mean(axis = 1)
     std_x = dat_x.std(axis = 1,
-                  ddof = n-1)
+            ddof = n-1)
     std_y = dat_y.std(axis = 1,
-                  ddof = n-1)
+            ddof = n-1)
     cov = np.dot(dat_x,dat_y.T) - n * np.dot(mean_x[:, np.newaxis],
-                                             mean_y[np.newaxis, :])
-    coeff =  sparse.csr_matrix(cov / np.dot(std_x[:, np.newaxis], 
-                                            std_y[np.newaxis, :]))
-    dat_x = None
-    dat_y = None
-    cov = None
-    coeff = general_utils.expand_sparse(mtx = coeff,
-                                        col_index = sel_y,
-                                        row_index = sel_x,
-                                        col_N = num_y,
-                                        row_N = num_x)
-    ds_x.ca[corr_x] += coeff.todense()
-    ds_y.ca[corr_y] += coeff.T.todense()
-    coeff = None
+            mean_y[np.newaxis, :])
+    coeff =  cov / np.dot(std_x[:, np.newaxis], 
+            std_y[np.newaxis, :])
+    coeff = pd.DataFrame(coeff)
+    return coeff
 
 def generate_correlations(loom_x,
                           layer_x,
-                          corr_x,
+                          corr_dist_x,
+                          corr_idx_x,
+                          max_k_x,
                           loom_y,
                           layer_y,
-                          corr_y,
+                          corr_dist_y,
+                          corr_idx_y,
+                          max_k_y,
                           direction,
+                          id_x,
+                          id_y,
                           ca_x = None,
                           ra_x = None,
                           ca_y = None,
                           ra_y = None,
                           batch_x = 512,
                           batch_y = 512,
+                          remove_version = False,
                           verbose = False):
     """
     Adds correlation matrices between two modalites to loom files
@@ -322,10 +296,8 @@ def generate_correlations(loom_x,
     Args:
         loom_x (str): Path to loom file
         layer_x (str): Name of layer containing counts
-        corr_x (str): Name of output correlation attribute
         loom_y (str): Path to loom file
         layer_y (str): Name of layer containing counts
-        corr_y (str): Name of output correlation attribute
         direction (str): Direction of expected correlation
             negative/- or positive/+
         ca_x (str): Name of column attribute to restrict counts by
@@ -343,7 +315,6 @@ def generate_correlations(loom_x,
     if verbose:
         logger.info('Generating correlation matrix')
         t0 = time.time()
-    # Get relevant attributes
     layers_x = loom_utils.make_layer_list(layer_x)
     col_x = loom_utils.get_attr_index(loom_file = loom_x,
                                       attr = ca_x,
@@ -371,34 +342,71 @@ def generate_correlations(loom_x,
         with loompy.connect(loom_y) as ds_y:
             num_x = ds_x.shape[1]
             num_y = ds_y.shape[1]
-            ds_x.ca[corr_x] = np.zeros((num_x,num_y),dtype = float)
-            ds_y.ca[corr_y] = np.zeros((num_y,num_x),dtype = float)
-    # Generate correlation matrix
-    with loompy.connect(loom_x) as ds_x:   
-        for (_,sel_x,view_x) in ds_x.scan(axis = 1,
+            dist_x = general_utils.make_nan_array(num_rows = num_x,
+                                                  num_cols = max_k_x)
+            idx_x = general_utils.make_nan_array(num_rows = num_x,
+                                                  num_cols = max_k_x)
+            dist_y = general_utils.make_nan_array(num_rows = num_y,
+                                                  num_cols = max_k_y)
+            idx_y = general_utils.make_nan_array(num_rows = num_y,
+                                                  num_cols = max_k_y)
+            x_feat = ds_x.ra[id_x][row_x]
+            y_feat = ds_y.ra[id_x][row_y]
+            if remove_version:
+                x_feat = general_utils.remove_gene_version(x_feat)
+                y_feat = general_utils.remove_gene_version(y_feat)
+    # Loop and make correlations
+    with loompy.connect(loom_x,mode='r') as ds_x:   
+        for (_,sel_x,dat_x) in ds_x.scan(axis = 1,
                                           items = col_x,
                                           layers = layers_x,
                                           batch_size = batch_x):
-            with loompy.connect(loom_y) as ds_y:
-                for (_,sel_y,view_y) in ds_y.scan(axis=1,
+            # Get data
+            dat_x = dat_x.layers[layer_x][row_x,:].T
+            dat_x = pd.DataFrame(dat_x).rank(pct = True, axis = 1).values
+            # Get ranks
+            if direction == '+' or direction == 'positive':
+                pass
+            elif direction == '-' or direction == 'negative':
+                dat_x = 1 - dat_x
+            else:
+                raise ValueError('Unsupported direction value ({})'.format(direction))
+            with loompy.connect(loom_y,mode='r') as ds_y:
+                for (_,sel_y,dat_y) in ds_y.scan(axis=1,
                                                   items = col_y,
                                                   layers = layers_y,
                                                   batch_size = batch_y):
-                    view_corrcoef(ds_x = ds_x,
-                                  view_x = view_x,
-                                  layer_x = layer_x,
-                                  corr_x = corr_x,
-                                  col_x = col_x,
-                                  row_x = row_x,
-                                  sel_x = sel_x,
-                                  ds_y = ds_y,
-                                  view_y = view_y,
-                                  layer_y = layer_y,
-                                  corr_y = corr_y,
-                                  col_y = col_y,
-                                  row_y = row_y,
-                                  sel_y = sel_y,
-                                  direction = direction)
+                    dat_y = dat_y.layers[layer_y][row_y,:].T
+                    dat_y = pd.DataFrame(dat_y).rank(pct = True, axis = 1)
+                    dat_y.columns = y_feat
+                    dat_y = dat_y.loc[:,x_feat]
+                    if dat_y.isnull().any().any():
+                        raise ValueError('Feature mismatch')
+                    dat_y = dat_y.values
+                    coeff = generate_coefficients(dat_x,
+                            dat_y)
+                    dist_x,idx_x = add_distances_for_mnn(coeff = coeff,
+                                                         self_index = sel_x,
+                                                         other_index = sel_y,
+                                                         k = max_k_x,
+                                                         dist_vals = dist_x,
+                                                         idx_vals = idx_x)
+                    dist_y, idx_y = add_distances_for_mnn(coeff = coeff.T,
+                                                         self_index = sel_y,
+                                                         other_index = sel_x,
+                                                         k = max_k_y,
+                                                         dist_vals = dist_y,
+                                                         idx_vals = idx_y)
+
+                    del coeff
+                    gc.collect()
+    # Add data to files
+    with loompy.connect(loom_x) as ds:
+        ds.ca[corr_dist_x] = dist_x
+        ds.ca[corr_idx_x] = idx_x.astype(int)
+    with loompy.connect(loom_y) as ds:
+        ds.ca[corr_dist_y] = dist_y
+        ds.ca[corr_idx_y] = idx_y.astype(int)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0,t1)
@@ -504,10 +512,10 @@ def gen_impute_adj(loom_file,
     """
     A_1 = []
     A_2 = []
-    num_other = np.sum(other_idx)
-    num_self = np.sum(self_idx)
+    num_other = other_idx.shape[0]
+    num_self = self_idx.shape[0]
     with loompy.connect(loom_file) as ds:
-        if self_idx.shape[0] != ds.shape[1]:
+        if num_self != ds.shape[1]:
             raise ValueError('Index does not match dimensions')
         for (_,selection,view) in ds.scan(axis = 1,
                                           layers = [''],
@@ -525,14 +533,14 @@ def gen_impute_adj(loom_file,
     A_1 = sparse.vstack(A_1)
     A_2 = sparse.vstack(A_2)
     A_1 = general_utils.expand_sparse(mtx = A_1,
-                                      col_index = np.where(other_idx)[0],
+                                      col_index = None,
                                       row_index = np.where(self_idx)[0],
-                                      col_N = other_idx.shape[0],
+                                      col_N = None,
                                       row_N = self_idx.shape[0])
     A_2 = general_utils.expand_sparse(mtx = A_2,
-                                      col_index = np.where(other_idx)[0],
+                                      col_index = None,
                                       row_index = np.where(self_idx)[0],
-                                      col_N = other_idx.shape[0],
+                                      col_N = None,
                                       row_N = self_idx.shape[0])
     return A_1, A_2
 
@@ -679,12 +687,16 @@ def gen_mutual_adj(loom_x,
         else:
             for j in c_x:
                 if j not in gc_x:
-                    gA_xy[j,:] = A_xy[j,:]
-                    gc_x = np.append(gc_x,j)
+                    kcell = int(A_xy[j,:].sum())
+                    if kcell <= max_x_to_y:
+                        gA_xy[j,:] = A_xy[j,:]
+                        gc_x = np.append(gc_x,j)
             for j in c_y:
                 if j not in gc_y:
-                    gA_yx[j,:] = A_yx[j,:]
-                    gc_y = np.append(gc_y,j)
+                    kcell = int(A_yx[j,:].sum())
+                    if kcell <= max_y_to_x:
+                        gA_yx[j,:] = A_yx[j,:]
+                        gc_y = np.append(gc_y,j)
         if verbose:
             basic_msg = '{0}: {1} cells with {2} k to other modality and {3} k back'
             logger.info(basic_msg.format(loom_x, len(gc_x),kx_xy, kx_yx))
@@ -859,7 +871,15 @@ def impute_data(loom_source,
     with loompy.connect(loom_target) as ds:
         num_feat = ds.shape[0]
         feat_tar = ds.ra[id_target]
-        W_impute = sparse.csr_matrix(ds.ca[markov_mnn][cidx_tar,:][:,cidx_src])
+        W_impute = []
+        for (_,selection,view) in ds.scan(axis = 1,
+                items = cidx_tar,
+                layers = [''],
+                batch_size = batch_size):
+            W_impute.append(sparse.csr_matrix(view.ca[markov_mnn][:,cidx_src]))
+        W_impute = sparse.vstack(W_impute)
+        del view
+        gc.collect()
         if markov_self is not None:
             W_self = ds.col_graphs[markov_self].tolil()[cidx_tar,:][:,cidx_tar]
     with loompy.connect(filename = loom_source, mode = 'r') as ds:
@@ -881,6 +901,7 @@ def impute_data(loom_source,
                        left_index = True,
                        right_index = True,
                        how = 'inner')
+    feat_df = feat_df.sort_values(by = 'tar')
     # Update self Markov
     if markov_self is not None:
         if W_impute.shape[0] != W_self.shape[0]:
@@ -908,9 +929,10 @@ def impute_data(loom_source,
         for batch in batches:
             tmp_use = W_use[batch,:]
             use_idx = np.unique(tmp_use.nonzero()[1])
+            use_src = np.where(cidx_src)[0][use_idx]
             with loompy.connect(filename = loom_source, mode = 'r') as ds_src:
-                    tmp_dat = ds_src.layers[layer_source][:,use_idx][feat_df['src'].values,:]
-                    tmp_dat = sparse.csr_matrix(tmp_dat).T
+                    tmp_dat = ds_src.layers[layer_source][:,use_src][feat_df['src'].values,:]
+                    tmp_dat = sparse.csr_matrix(tmp_dat.T)
             imputed = tmp_use[:,use_idx].dot(tmp_dat)
             imputed = general_utils.expand_sparse(mtx = imputed,
                                                   col_index = feat_df['tar'].values,
@@ -1007,13 +1029,11 @@ def loop_impute_data(loom_source,
         raise ValueError('layer_source and layer_target should be consistent shapes')
         
 def prep_for_imputation(loom_x,
-                        corr_x,
                         neighbor_x,
                         distance_x,
                         mutual_x,
                         used_x,
                         loom_y,
-                        corr_y,
                         neighbor_y,
                         distance_y,
                         mutual_y,
@@ -1040,7 +1060,6 @@ def prep_for_imputation(loom_x,
     
     Args:
         loom_x (str): Path to loom file containing one dataset
-        corr_x (str): Name of column attribute containing correlations
         neighbor_x (str): Name of kNN neighbors
             k = max_x_to_y * scale_x_to_y
         distance_x (str): Name of kNN distances
@@ -1050,7 +1069,6 @@ def prep_for_imputation(loom_x,
         layer_x (str/list): Layer(s) containing counts used for imputation
         out_x (str/list): Output layer(s) for imputed data
         loom_y (str): Path to loom file containing one dataset
-        corr_y (str): Name of column attribute containing correlations
         neighbor_y (str): Name of kNN neighbors
             k = max_y_to_x * scale_y_to_x
         distance_y (str): Name of kNN distances
@@ -1093,23 +1111,6 @@ def prep_for_imputation(loom_x,
                                       columns=True,
                                       as_bool = True,
                                       inverse = False)
-    # Generate kNN for max value
-    gen_knn_from_corr(loom_file = loom_x,
-                      corr = corr_x,
-                      neighbor_attr = neighbor_x,
-                      distance_attr = distance_x,
-                      k = max_x_to_y*mutual_scale_x_to_y,
-                      self_idx = col_x,
-                      other_idx = col_y,
-                      batch_size = batch_x)
-    gen_knn_from_corr(loom_file = loom_y,
-                      corr = corr_y,
-                      neighbor_attr = neighbor_y,
-                      distance_attr = distance_y,
-                      k = max_y_to_x*mutual_scale_y_to_x,
-                      self_idx = col_y,
-                      other_idx = col_x,
-                      batch_size = batch_y)
     # Generate mutual nearest neighbors Markov matrix
     gen_mutual_markov(loom_x = loom_x,
                       neighbor_x = neighbor_x,
@@ -1139,7 +1140,6 @@ def prep_for_imputation(loom_x,
         logger.info('Prepared for imputation in {0:.2f} {1}'.format(time_run,time_fmt))
         
 def impute_between_datasets(loom_x,
-                            corr_x,
                             neighbor_x,
                             distance_x,
                             self_x,
@@ -1148,7 +1148,6 @@ def impute_between_datasets(loom_x,
                             layer_x,
                             out_x,
                             loom_y,
-                            corr_y,
                             neighbor_y,
                             distance_y,
                             self_y,
@@ -1178,7 +1177,6 @@ def impute_between_datasets(loom_x,
     
     Args:
         loom_x (str): Path to loom file containing one dataset
-        corr_x (str): Name of column attribute containing correlations
         neighbor_x (str): Name of kNN neighbors
             k = max_x_to_y * scale_x_to_y
         distance_x (str): Name of kNN distances
@@ -1188,7 +1186,6 @@ def impute_between_datasets(loom_x,
         layer_x (str/list): Layer(s) containing counts used for imputation
         out_x (str/list): Output layer(s) for imputed data
         loom_y (str): Path to loom file containing one dataset
-        corr_y (str): Name of column attribute containing correlations
         neighbor_y (str): Name of kNN neighbors
             k = max_y_to_x * scale_y_to_x
         distance_y (str): Name of kNN distances
@@ -1217,7 +1214,6 @@ def impute_between_datasets(loom_x,
     """
     # Prepare for imputation
     prep_for_imputation(loom_x = loom_x,
-                        corr_x = corr_x,
                         neighbor_x = neighbor_x,
                         distance_x = distance_x,
                         self_x = self_x,
@@ -1226,7 +1222,6 @@ def impute_between_datasets(loom_x,
                         layer_x = layer_x,
                         out_x = out_x,
                         loom_y = loom_y,
-                        corr_y = corr_y,
                         neighbor_y = neighbor_y,
                         distance_y = distance_y,
                         self_y = self_y,
