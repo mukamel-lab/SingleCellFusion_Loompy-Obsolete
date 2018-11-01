@@ -332,7 +332,7 @@ def normalize_10x(loom_file,
     # Normalize counts
     layers = loom_utils.make_layer_list(in_layer)
     with loompy.connect(loom_file) as ds:
-        med_lib = np.median(ds.ca[size_attr])
+        med_lib = np.median(ds.ca[size_attr][col_idx])
         ds.layers[out_layer] = sparse.coo_matrix(ds.shape,dtype=float)
         for (_,selection,view) in ds.scan(axis = 1,
                                           items = col_idx,

@@ -199,6 +199,7 @@ def plot_scatter(df_plot,
                  output = None,
                  xlim = 'auto',
                  ylim = 'auto',
+                 highlight = None,
                  x_label = None,
                  y_label = None,
                  title = None,
@@ -237,11 +238,24 @@ def plot_scatter(df_plot,
         df_plot[col_opt] = 'k'
     # Make plot
     fig,ax = plt.subplots(figsize = figsize)
-    im = ax.scatter(df_plot[x_axis],
-                    df_plot[y_axis],
-                    s = s,
-                    c = df_plot[col_opt],
-                    **kwargs)
+    if highlight is not None:
+        use_idx = df_plot[col_opt] != '#ffffff'
+        #ax.scatter(df_plot[x_axis][np.logical_not(use_idx)],
+        #        df_plot[y_axis][np.logical_not(use_idx)],
+        #        s = s,
+        #        c = df_plot[col_opt][np.logical_not(use_idx)],
+        #        alpha = 0.25)
+        ax.scatter(df_plot[x_axis][use_idx],
+                df_plot[y_axis][use_idx],
+                s = s,
+                c = df_plot[col_opt][use_idx])
+
+    else:
+        im = ax.scatter(df_plot[x_axis],
+                        df_plot[y_axis],
+                        s = s,
+                        c = df_plot[col_opt],
+                        **kwargs)
     # Modify figure
     if title is not None:
         ax.set_title(title)
@@ -316,7 +330,8 @@ def scatter_cluster(loom_file,
                     valid_attr = None,
                     highlight = None,
                     s = 2,
-                    downsample = None,
+                    downsample_number = None,
+                    downsample_attr = None,
                     legend = False,
                     output = None,
                     xlim = 'auto',
@@ -360,12 +375,12 @@ def scatter_cluster(loom_file,
                                         inverse = False)
     # Set-up dataframe 
     with loompy.connect(loom_file) as ds:
-        df_plot = pd.DataFrame({'clusterID':ds.ca[clust_attr][col_idx].astype(str),
+        df_plot = pd.DataFrame({clust_attr:ds.ca[clust_attr][col_idx].astype(str),
                                 'x_val':ds.ca[x_axis][col_idx].astype(float),
                                 'y_val':ds.ca[y_axis][col_idx].astype(float)})
         if color_attr is None:
-            unq_clusters = general_utils.nat_sort(df_plot['clusterID'].unique())
-            col_opts = pd.DataFrame({'clusterID':unq_clusters})
+            unq_clusters = general_utils.nat_sort(df_plot[clust_attr].unique())
+            col_opts = pd.DataFrame({clust_attr:unq_clusters})
             if highlight is None:
                 col_opts['color'] = get_random_colors(col_opts.shape[0])
             else:
@@ -375,35 +390,41 @@ def scatter_cluster(loom_file,
                     pass
                 else:
                     raise ValueError('Unsupported type for highlight')
-                hl_col = pd.DataFrame({'clusterID':highlight})
+                hl_col = pd.DataFrame(highlight,
+                        columns = [clust_attr])
                 hl_col['color'] = get_random_colors(hl_col.shape[0])
                 col_opts = pd.merge(col_opts,
                                     hl_col,
                                     how = 'left',
-                                    left_on = 'clusterID',
-                                    right_on = 'clusterID')
-                col_opts['color'] = col_opts['color'].fillna('#000000')
+                                    left_on = clust_attr,
+                                    right_on = clust_attr)
+                col_opts['color'] = col_opts['color'].fillna('#ffffff')
             df_plot = pd.merge(df_plot,
                                col_opts,
-                               left_on = 'clusterID',
-                               right_on='clusterID')
+                               left_on = clust_attr,
+                               right_on=clust_attr)
             
         else:
             df_plot['color'] = ds.ca[color_attr][col_idx]
-    if downsample is not None:
-        if isinstance(downsample,int):
+        if downsample_attr is not None:
+            df_plot[downsample_attr] = ds.ca[downsample_attr][col_idx]
+    if downsample_number is not None:
+        if isinstance(downsample_number,int):
+            if downsample_attr is None:
+                downsample_attr = clust_attr
             idx_to_use = []
-            for cluster in df_plot['clusterID'].unique():
-                clust_idx = np.where(df_plot['clusterID'] == cluster)[0]
-                if clust_idx.shape[0] <= downsample:
-                    idx_to_use.append(clust_idx)
+            for item in df_plot[downsample_attr].unique():
+                ds_idx = np.where(df_plot[downsample_attr] == item)[0]
+                if ds_idx.shape[0] <= downsample_number:
+                    idx_to_use.append(ds_idx)
                 else:
-                    subsample = np.random.choice(a = clust_idx, size = downsample)
+                    subsample = np.random.choice(a = ds_idx, 
+                            size = downsample_number)
                     idx_to_use.append(subsample)
             idx_to_use = np.hstack(idx_to_use)
             df_plot = df_plot.iloc[idx_to_use,:]
         else:
-            raise ValueError('downsample must be an integer')
+            raise ValueError('downsample_number must be an integer')
     # Make figure
     plot_scatter(df_plot = df_plot,
                  x_axis = 'x_val',
@@ -411,7 +432,8 @@ def scatter_cluster(loom_file,
                  col_opt = 'color',
                  s = s,
                  legend = legend,
-                 legend_labels = 'clusterID',
+                 legend_labels = clust_attr,
+                 highlight = highlight,
                  output = output,
                  xlim = xlim,
                  ylim = ylim,
@@ -542,7 +564,7 @@ def scatter_feature(loom_file,
         df_plot = pd.DataFrame({'x_val':ds.ca[x_axis][col_idx].astype(float),
                                 'y_val':ds.ca[y_axis][col_idx].astype(float)})
         if clust_attr:
-            df_plot['clusterID'] = ds.ca[clust_attr][col_idx].astype(str)
+            df_plot[clust_attr] = ds.ca[clust_attr][col_idx].astype(str)
     # Determine colors for heatmap
     df_plot['color'] = percentile_norm(counts = counts,
                                        low_p = low_p,
@@ -552,8 +574,8 @@ def scatter_feature(loom_file,
             idx_to_use = []
             if clust_attr:
                 
-                for cluster in df_plot['clusterID'].unique():
-                    clust_idx = np.where(df_plot['clusterID'] == cluster)[0]
+                for cluster in df_plot[clust_attr].unique():
+                    clust_idx = np.where(df_plot[clust_attr] == cluster)[0]
                     if clust_idx.shape[0] <= downsample:
                         idx_to_use.append(clust_idx)
                     else:
@@ -574,7 +596,7 @@ def scatter_feature(loom_file,
                  col_opt = 'color',
                  s = s,
                  legend = legend,
-                 legend_labels = 'clusterID',
+                 legend_labels = clust_attr,
                  output = output,
                  xlim = xlim,
                  ylim = ylim,

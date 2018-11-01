@@ -225,13 +225,19 @@ def add_distances_for_mnn(coeff,
         k,
         dist_vals,
         idx_vals):
-    knn = ((-coeff).rank(axis=1,method = 'first') <= k).values.astype(bool)
+    if coeff.shape[1] < k:
+        self_k = coeff.shape[1]
+        knn = np.ones((coeff.shape[0],coeff.shape[1]),
+                dtype = bool)
+    else:
+        self_k = k
+        knn = ((-coeff).rank(axis=1,method = 'first') <= k).values.astype(bool)
     new_idx = other_index[np.where(knn)[1]]
     new_dist = coeff.values[knn]
     new_idx = np.reshape(new_idx,
-                         newshape = (coeff.shape[0],k))
+                         newshape = (coeff.shape[0],self_k))
     new_dist = np.reshape(new_dist,
-                          newshape = (coeff.shape[0],k))
+                          newshape = (coeff.shape[0],self_k))
     old_dist = dist_vals[self_index,:]
     old_idx = idx_vals[self_index,:]
     comb_dist = np.hstack([old_dist,new_dist])
@@ -480,7 +486,7 @@ def multimodal_adjacency(distances,
     knn = ((-tmp).rank(axis=1,method='first') <= new_k).values.astype(bool)
     if np.unique(np.sum(knn,axis=1)).shape[0] != 1:
         raise ValueError('k is inappropriate for data')
-    A = sparse.csr_matrix((np.ones((neighbors.shape[0]*new_k,),dtype=int),
+    A = sparse.csr_matrix((np.ones((int(neighbors.shape[0]*new_k),),dtype=int),
                            (np.where(knn)[0],neighbors[knn])),
                           (neighbors.shape[0],num_col))
     return A
