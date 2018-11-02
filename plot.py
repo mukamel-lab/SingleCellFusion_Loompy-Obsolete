@@ -589,6 +589,12 @@ def scatter_feature(loom_file,
             df_plot = df_plot.iloc[idx_to_use,:]
         else:
             raise ValueError('downsample must be an integer')
+    if highlight is not None and clust_attr is not None:
+        hl_idx = pd.DataFrame(np.arange(0,df_plot.shape[0]),
+                index = df_plot[clust_attr].values,
+                columns = ['idx'])
+        hl_idx = hl_idx.loc[highlight]
+        df_plot = df_plot.iloc[hl_idx['idx'].values]
     # Make figure
     plot_scatter(df_plot = df_plot,
                  x_axis = 'x_val',

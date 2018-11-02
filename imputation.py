@@ -483,6 +483,7 @@ def multimodal_adjacency(distances,
     if distances.shape[1] < new_k:
         raise ValueError('new_k must be less than the current k')
     tmp = pd.DataFrame(distances)
+    new_k = int(new_k)
     knn = ((-tmp).rank(axis=1,method='first') <= new_k).values.astype(bool)
     if np.unique(np.sum(knn,axis=1)).shape[0] != 1:
         raise ValueError('k is inappropriate for data')
@@ -665,7 +666,6 @@ def gen_mutual_adj(loom_x,
                                                            mutual_scale_x_to_y*k_xy,
                                                            mutual_scale_y_to_x*k_yx,
                                                            k_yx)):
-
         # Make adjacency matrix
         A_xy, A_yx = gen_k_adj(loom_x = loom_x,
                                neighbor_x = neighbor_x,
