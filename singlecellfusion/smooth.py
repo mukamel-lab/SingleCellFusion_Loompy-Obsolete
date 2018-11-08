@@ -1,13 +1,17 @@
 """
 Adapatation of MAGIC for working with loom files and epigenomic data
 
-This code originates from https://github.com/KrishnaswamyLab/MAGIC
+This code originates from https://github.com/KrishnaswamyLab/MAGIC which is covered under a GNU General Public License version 2.
 
 The publication describing MAGIC is 'MAGIC: A diffusion-based imputation method reveals gene-gene interactions in single-cell RNA-sequencing data'
 
 The publication was authored by: David van Dijk, Juozas Nainys, Roshan Sharma, Pooja Kathail, Ambrose J Carr, Kevin R Moon, Linas Mazutis, Guy Wolf, Smita Krishnaswamy, Dana Pe'er
 
 The DOI is https://doi.org/10.1101/111591
+
+Modifications performed by Wayne Doyle unless noted
+
+(C) 2018 Mukamel Lab GPLv2
 """
 
 import pandas as pd

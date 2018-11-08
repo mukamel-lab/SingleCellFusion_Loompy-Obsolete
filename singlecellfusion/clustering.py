@@ -2,6 +2,8 @@
 Collection of functions used to perform clustering on a loom file
 
 Written by Wayne Doyle unless otherwise noted
+
+(C) 2018 Mukamel Lab GPLv2
 """
 
 import loompy

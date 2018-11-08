@@ -3,9 +3,7 @@ Collection of loom-specific utilities
     
 Written by Wayne Doyle unless otherwise noted
 
-TO DO:
-    Have column/row selection with 0/1 be consistent across all functions
-        loom and numpy use different conventions
+(C) 2018 Mukamel Lab GPLv2
 """
 
 import loompy

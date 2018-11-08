@@ -2,6 +2,8 @@
 General-purpose utility functions
 
 Written by Wayne Doyle unless otherwise noted
+
+(C) 2018 Mukamel Lab GPLv2
 """
 import collections
 import pandas as pd

@@ -2,6 +2,8 @@
 Functions used to perform dimensionality reduction on loom files
 
 Written by Wayne Doyle
+
+(C) 2018 Mukamel Lab GPLv2
 """
 import loompy
 import numpy as np

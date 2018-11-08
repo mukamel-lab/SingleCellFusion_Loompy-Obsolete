@@ -2,6 +2,8 @@
 Collection of functions used to generate and work with graphs and adjacency matrices
 
 Written by Wayne Doyle unless otherwise noted
+
+(C) 2018 Mukamel Lab GPLv2
 """
 
 import loompy

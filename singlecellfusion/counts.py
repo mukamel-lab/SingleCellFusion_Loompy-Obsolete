@@ -2,6 +2,8 @@
 Functions used to process multi-omics count data (RNA/ATAC)
 
 Written by Wayne Doyle
+
+(C) 2018 Mukamel Lab GPLv2
 """
 
 import loompy

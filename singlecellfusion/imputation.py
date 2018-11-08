@@ -3,6 +3,7 @@ Collection of functions used to perform imputation across datasets
     
 Written/developed by Fangming Xie and Wayne Doyle
 
+(C) 2018 Mukamel Lab GPLv2
 """
 
 import loompy

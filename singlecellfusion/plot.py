@@ -3,6 +3,8 @@ Collection of functions used to generate plots
     
 Written by Wayne Doyle unless otherwise noted
 
+(C) 2018 Mukamel Lab GPLv2
+
 """
 
 import loompy
@@ -16,10 +18,8 @@ import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 
 
-import sys
-sys.path.insert(0,'/cndd/widoyle/git_repos/')
-from SingleCellFusion import general_utils
-from SingleCellFusion import loom_utils
+from . import general_utils
+from . import loom_utils
 
 # Start log
 logging.basicConfig(level = logging.INFO)
