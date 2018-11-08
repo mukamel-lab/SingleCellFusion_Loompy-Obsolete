@@ -1,2 +1,2 @@
 # SingleCellFusion
-This is the initial beta version of SingleCellFusion designed for use with sparse matrices. An updated version based on the loompy infrastructure will be uploaded soon.
+This is a currently unstable form of SingleCellFusion built on a loompy backbone. Function flags will be updated and wrapper functions added in the coming weeks to make SingleCellFusion more user-friendly.
