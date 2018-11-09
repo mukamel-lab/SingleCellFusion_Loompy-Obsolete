@@ -5,18 +5,35 @@ Written by Wayne Doyle unless otherwise noted
 
 (C) 2018 Mukamel Lab GPLv2
 """
-import collections
-import pandas as pd
 import numpy as np
 import os
-import pwd
-import datetime
 import re
-import subprocess
-import io
 from scipy import sparse
 
 bin_dir = os.path.dirname(os.path.realpath(__file__))
+
+
+def alphanum_key(item):
+    """
+    Key function for nat_sort
+
+    Args:
+        item (str): Value to sort
+
+    Based on Mark Byer's post on StackOverflow:
+    https://stackoverflow.com/questions/...
+    4836710/does-python-have-a-built-in-function-for-string-natural-sort
+
+    """
+    keys = []
+    for i in re.split('([0-9]+)', item):
+        if i.isdigit():
+            i = int(i)
+        else:
+            i = i.lower()
+        keys.append(i)
+    return keys
+
 
 def nat_sort(items):
     """
@@ -25,14 +42,14 @@ def nat_sort(items):
     Args:
         items (list): List of items
 
-    Copied from Mark Byer's post on StackOverflow:
-    https://stackoverflow.com/questions/4836710/does-python-have-a-built-in-function-for-string-natural-sort
+    Based on Mark Byer's post on StackOverflow:
+    https://stackoverflow.com/questions/...
+    4836710/does-python-have-a-built-in-function-for-string-natural-sort
     """
-    convert = lambda text: int(text) if text.isdigit() else text.lower()
-    alphanum_key = lambda key: [convert(c) for c in re.split('([0-9]+)', key)]
-    return sorted(items,key = alphanum_key)
+    return sorted(items, key=alphanum_key)
 
-def format_run_time(t0,t1):
+
+def format_run_time(t0, t1):
     """
     Formats the time between two points into human-friendly format
     
@@ -58,8 +75,9 @@ def format_run_time(t0,t1):
         time_fmt = 'seconds'
     return [time_run, time_fmt]
 
-def get_mouse_chroms(prefix=False, 
-                     include_y = False):
+
+def get_mouse_chroms(prefix=False,
+                     include_y=False):
     """
     Returns a dictionary of chromosomes and their sizes (in bases)
     
@@ -70,42 +88,43 @@ def get_mouse_chroms(prefix=False,
     Returns:
         chrom_dict (dict): keys are chromosomes, values are lengths
     """
-    chrom_dict = {'1':195471971,
-            '2':182113224,
-            '3':160039680,
-            '4':156508116,
-            '5':151834684,
-            '6':149736546,
-            '7':145441459,
-            '8':129401213,
-            '9':124595110,
-            '10':130694993,
-            '11':122082543,
-            '12':120129022,
-            '13':120421639,
-            '14':124902244,
-            '15':104043685,
-            '16':98207768,
-            '17':94987271,
-            '18':90702639,
-            '19':61431566,
-            'X':171031299,
-            }
+    chrom_dict = {'1': 195471971,
+                  '2': 182113224,
+                  '3': 160039680,
+                  '4': 156508116,
+                  '5': 151834684,
+                  '6': 149736546,
+                  '7': 145441459,
+                  '8': 129401213,
+                  '9': 124595110,
+                  '10': 130694993,
+                  '11': 122082543,
+                  '12': 120129022,
+                  '13': 120421639,
+                  '14': 124902244,
+                  '15': 104043685,
+                  '16': 98207768,
+                  '17': 94987271,
+                  '18': 90702639,
+                  '19': 61431566,
+                  'X': 171031299,
+                  }
     if include_y:
         chrom_dict['Y'] = 91744698
     if prefix:
         mod = dict()
         for key in chrom_dict.keys():
             new_key = 'chr' + key
-            mod[new_key] = chrom_dict[key] 
+            mod[new_key] = chrom_dict[key]
         chrom_dict = mod_dict
     return chrom_dict
 
+
 def expand_sparse(mtx,
-                  col_index = None,
-                  row_index = None,
-                  col_N = None,
-                  row_N = None,
+                  col_index=None,
+                  row_index=None,
+                  col_N=None,
+                  row_N=None,
                   dtype=float):
     """
     Expands a sparse matrix
@@ -134,21 +153,22 @@ def expand_sparse(mtx,
         mtx = sparse.coo_matrix((mtx.data,
                                  (row_index[mtx.nonzero()[0]],
                                   mtx.nonzero()[1])),
-                                shape = (row_N,mtx.shape[1]),
-                                dtype = dtype)
+                                shape=(row_N, mtx.shape[1]),
+                                dtype=dtype)
     elif row_index is None:
         mtx = sparse.coo_matrix((mtx.data,
                                  (mtx.nonzero()[0],
                                   col_index[mtx.nonzero()[1]])),
-                                shape = (mtx.shape[0],col_N),
-                                dtype = dtype)
-    else: 
+                                shape=(mtx.shape[0], col_N),
+                                dtype=dtype)
+    else:
         mtx = sparse.coo_matrix((mtx.data,
-                                 (row_index[mtx.nonzero()[0]], 
+                                 (row_index[mtx.nonzero()[0]],
                                   col_index[mtx.nonzero()[1]])),
-                                shape = (row_N, col_N), 
-                                dtype = dtype)
+                                shape=(row_N, col_N),
+                                dtype=dtype)
     return mtx
+
 
 def remove_gene_version(gene_ids):
     """
@@ -164,10 +184,11 @@ def remove_gene_version(gene_ids):
     Assumptions:
         The only period in the gene ID is directly before the gene version
     """
-    gene_ids = np.array(list(map(lambda x: re.sub(r'\..*$','', x),gene_ids)))
+    gene_ids = np.array(list(map(lambda x: re.sub(r'\..*$', '', x), gene_ids)))
     return gene_ids
 
-def make_nan_array(num_rows,num_cols):
-    nan_array = np.empty((num_rows,num_cols))
+
+def make_nan_array(num_rows, num_cols):
+    nan_array = np.empty((num_rows, num_cols))
     nan_array.fill(np.nan)
     return nan_array
