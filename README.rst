@@ -1,10 +1,6 @@
 singlecellfusion
 ================
 
-.. image:: https://img.shields.io/pypi/v/singlecellfusion.svg
-    :target: https://pypi.python.org/pypi/singlecellfusion
-    :alt: Latest PyPI version
-
 Analyzes single-cell transcriptomic and epigenomic data
 
 Usage
@@ -13,17 +9,14 @@ This is a currently unstable form of SingleCellFusion built on a loompy backbone
 
 Installation
 ------------
+Currently, the only method of installing SingleCellFusion is to clone the github repository. Enter the directory where you would like to install SingleCellFusion and enter the following commands on the command line::
+    
+    git clone https://github.com/mukamel-lab/SingleCellFusion.git
+    cd SingleCellFusion
+    python setup.py install
 
-Requirements
-^^^^^^^^^^^^
-
-Compatibility
--------------
-
-Licence
--------
 
 Authors
 -------
 
-`singlecellfusion` was written by `Mukamel Lab <lab@brainome.ucsd.edu>`_.
+`singlecellfusion` was written by `Wayne Doyle <widoyle@ucsd.edu>`, `Fangming Xie <f7xie@ucsd.edu>`, `Ethan Armand <earmand@ucsd.edu>`, `Mukamel Lab <lab@brainome.ucsd.edu>`_.

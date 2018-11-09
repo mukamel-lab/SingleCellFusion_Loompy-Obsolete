@@ -13,10 +13,7 @@ import pwd
 import datetime
 import re
 import subprocess
-import pysam
 import io
-import gzip
-import bz2 
 from scipy import sparse
 
 bin_dir = os.path.dirname(os.path.realpath(__file__))

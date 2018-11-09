@@ -27,14 +27,20 @@ setup(
 
     packages=find_packages(exclude=('tests',)),
 
-    install_requires=[],
+    install_requires=['annoy>=1.13.0',
+        'fitsne>=0.2.3',
+        'loompy>=2.0.16',
+        'louvain>=0.6.1',
+        'numpy>=1.15.4',
+        'pandas>=0.23.4',
+        'python-igraph>=0.7.1.post6',
+        'scikit-learn>=0.19.1',
+        'scipy>=1.1.0'
+        ],
 
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
-        'License :: OSI Approved :: MIT License',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
