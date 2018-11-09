@@ -19,4 +19,4 @@ Currently, the only method of installing SingleCellFusion is to clone the github
 Authors
 -------
 
-`singlecellfusion` was written by `Wayne Doyle <widoyle@ucsd.edu>`, `Fangming Xie <f7xie@ucsd.edu>`, `Ethan Armand <earmand@ucsd.edu>`, `Mukamel Lab <lab@brainome.ucsd.edu>`_.
+`singlecellfusion` was written by `Wayne Doyle <widoyle@ucsd.edu>`_, `Fangming Xie <f7xie@ucsd.edu>`_, `Ethan Armand <earmand@ucsd.edu>`_. All authors are members of the `Mukamel Lab <lab@brainome.ucsd.edu>`_.
