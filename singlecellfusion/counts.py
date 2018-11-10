@@ -9,32 +9,28 @@ Written by Wayne Doyle
 import loompy
 import pandas as pd
 import numpy as np
-import re
 import time
-import glob
-import os
 from scipy import sparse
 import logging
 from . import general_utils
 from . import loom_utils
 
-
 # Start log
-logging.basicConfig(level = logging.INFO)
-logger = logging.getLogger(__name__) 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def add_feature_length(loom_file,
                        bed_file,
-                       id_attr = 'Accession',
-                       out_attr = 'Length'):
+                       id_attr='Accession',
+                       out_attr='Length'):
     """
     Determines and adds feature lengths to a loom file
     
     Args:
         loom_file (str): Path to loom file
         bed_file (str): Path to bed file
-        id_attr (str): Name of row attribute in loom_file specifying unique IDs for features
+        id_attr (str): Row attribute in loom_file specifying unique feature IDs
         out_attr (str): Name of output row attribute specifying feature lengths
     
     Assumptions:
@@ -46,17 +42,17 @@ def add_feature_length(loom_file,
     """
     # Read bed file
     bed_df = pd.read_table(bed_file,
-                           sep = '\t',
-                           header = None,
-                           index_col = None,
-                           usecols = [0,1,2,3],
-                           names = ['chr','start','stop','id'],
-                           dtype = {'chr':str,
-                                    'start':int,
-                                    'stop':int,
-                                    'id':str})
+                           sep='\t',
+                           header=None,
+                           index_col=None,
+                           usecols=[0, 1, 2, 3],
+                           names=['chr', 'start', 'stop', 'id'],
+                           dtype={'chr': str,
+                                  'start': int,
+                                  'stop': int,
+                                  'id': str})
     bed_df['length'] = np.abs(bed_df['stop'] - bed_df['start'])
-    bed_df = bed_df.set_index(keys = 'id',drop = True)
+    bed_df = bed_df.set_index(keys='id', drop=True)
     # Get IDs from loom file
     with loompy.connect(loom_file) as ds:
         bed_df = bed_df.loc[ds.ra[id_attr]]
@@ -64,14 +60,15 @@ def add_feature_length(loom_file,
             raise ValueError('loom_file has features not present in bed file')
         ds.ra[out_attr] = bed_df['length'].values
 
+
 def normalize_counts(loom_file,
                      method,
                      in_layer,
                      out_layer,
-                     col_attr = None,
-                     length_attr = None,
-                     batch_size = 512,
-                     verbose = False):
+                     col_attr=None,
+                     length_attr=None,
+                     batch_size=512,
+                     verbose=False):
     """
     Calculates normalized feature counts per cell in a loom file
     
@@ -98,59 +95,62 @@ def normalize_counts(loom_file,
     if verbose:
         t0 = time.time()
         logger.info('Normalizing counts by {}'.format(method))
-        col_idx = loom_utils.get_attr_index(loom_file = loom_file, 
-                                            attr = col_attr,
-                                            columns = True, 
-                                            as_bool = True,
-                                            inverse = False)
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=col_attr,
+                                        columns=True,
+                                        as_bool=True,
+                                        inverse=False)
     with loompy.connect(loom_file) as ds:
         if length_attr:
-            lengths = ds.ra[length_attr] / 1000 #ASSUMPTION: length in bases
+            lengths = ds.ra[length_attr] / 1000  # ASSUMPTION: length in bases
         elif method.lower() == 'rpkm' or method.lower() == 'tpm':
-            raise ValueError('Cannot calculate {} without feature lengths'.format(method))
+            raise ValueError(
+                'Cannot calculate {} without feature lengths'.format(method))
         ds.layers[out_layer] = sparse.csc_matrix(ds.shape)
-        layers = loom_utils.make_layer_list(layers = in_layer)
-        for (_,selection,view) in ds.scan(axis = 1,
-                items = col_idx,
-                layers = layers,
-                batch_size = batch_size):
-            dat = sparse.csc_matrix(view.layer[in_layer][:,:])
+        layers = loom_utils.make_layer_list(layers=in_layer)
+        for (_, selection, view) in ds.scan(axis=1,
+                                            items=col_idx,
+                                            layers=layers,
+                                            batch_size=batch_size):
+            dat = sparse.csc_matrix(view.layer[in_layer][:, :])
             if method.lower() == 'rpkm' or method.lower() == 'fpkm':
-                scaling = (dat.sum(axis = 0) / 1e6).A.ravel()
+                scaling = (dat.sum(axis=0) / 1e6).A.ravel()
                 scaling = np.divide(1,
-                        scaling,
-                        out = np.zeros_like(scaling),
-                        where = scaling != 0)
+                                    scaling,
+                                    out=np.zeros_like(scaling),
+                                    where=scaling != 0)
                 rpm = dat.dot(sparse.diags(scaling))
-                normalized = sparse.diags(1/lengths).dot(rpm)
+                normalized = sparse.diags(1 / lengths).dot(rpm)
             elif method.lower() == 'tpm':
-                rpk = sparse.diags(1/lengths).dot(dat)
-                scaling = (rpk.sum(axis = 0) / 1e6).A.ravel()
+                rpk = sparse.diags(1 / lengths).dot(dat)
+                scaling = (rpk.sum(axis=0) / 1e6).A.ravel()
                 scaling = np.divide(1,
-                        scaling,
-                        out = np.zeros_like(scaling),
-                        where = scaling != 0)
+                                    scaling,
+                                    out=np.zeros_like(scaling),
+                                    where=scaling != 0)
                 normalized = rpk.dot(sparse.diags(scaling))
             elif method.lower() == 'cpm':
-                scaling = (dat.sum(axis = 0) / 1e6).A.ravel()
+                scaling = (dat.sum(axis=0) / 1e6).A.ravel()
                 scaling = np.divide(1,
-                        scaling,
-                        out = np.zeros_like(scaling),
-                        where = scaling != 0)
+                                    scaling,
+                                    out=np.zeros_like(scaling),
+                                    where=scaling != 0)
                 normalized = dat.dot(sparse.diags(scaling))
             else:
                 raise ValueError('{} is not supported'.format(method))
-            ds.layers[out_layer][:,selection] = normalized.toarray()
+            ds.layers[out_layer][:, selection] = normalized.toarray()
     if verbose:
         t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0,t1)
-        logger.info('Calculated {0} in {1:.2f} {2}'.format(method,time_run,time_fmt))
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        logger.info(
+            'Calculated {0} in {1:.2f} {2}'.format(method, time_run, time_fmt))
+
 
 def log_transform_counts(loom_file,
                          in_layer,
-                         out_layer = 'log10',
-                         log_type = 'log10',
-                         verbose = False):
+                         out_layer='log10',
+                         log_type='log10',
+                         verbose=False):
     """
     Generates a layer of log-transformed counts in a loom file
     
@@ -162,7 +162,7 @@ def log_transform_counts(loom_file,
             log10
             log2
             log (natural log)
-        offset (int): 
+        verbose (bool): If true, prints logging messages
         
     Assumptions:
         Automatically adds an offset of 1 (for sparse matrix purposes)
@@ -186,18 +186,19 @@ def log_transform_counts(loom_file,
         ds.layers[out_layer] = transformed
     if verbose:
         t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0,t1)
-        logger.info('Transformed in {0:.2f} {1}'.format(time_run,time_fmt))
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        logger.info('Transformed in {0:.2f} {1}'.format(time_run, time_fmt))
+
 
 def find_putative_neurons(loom_file,
                           layer,
                           clust_attr,
-                          out_attr = 'Valid_Neuron',
-                          neuron_id = 'ENSMUSG00000027273.13',
-                          gene_attr = 'Accession',
-                          valid_attr = None,
-                          q = 0.95,
-                          verbose = False):
+                          out_attr='Valid_Neuron',
+                          neuron_id='ENSMUSG00000027273.13',
+                          gene_attr='Accession',
+                          valid_attr=None,
+                          q=0.95,
+                          verbose=False):
     """
     Finds putative neuron clusters in a loom file
     
@@ -205,41 +206,48 @@ def find_putative_neurons(loom_file,
         loom_file (str): Path to loom file
         layer (str): Layer containing counts
         clust_attr (str): Attribute specifying cluster identities
-        out_attr (str): Output attribute 
+        out_attr (str): Output attribute
+        neuron_id (str): Name of feature marker for putative neurons
+        gene_attr (str): Name of attribute where neuron_id is located
+        valid_attr (str): Name of attribute to restrict cells
+        q (float): Quantile for a cell to be considered a neuron
+        verbose (bool): If true, print logging messages
     """
-    col_idx = loom_utils.get_attr_index(loom_file = loom_file, 
-                                            attr = valid_attr,
-                                            columns = True, 
-                                            as_bool = True,
-                                            inverse = False)
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_attr,
+                                        columns=True,
+                                        as_bool=True,
+                                        inverse=False)
     with loompy.connect(loom_file) as ds:
         genes = ds.ra[gene_attr]
         of_interest = genes == neuron_id
         if not np.any(of_interest):
             raise ValueError('Could not find {0} in {1}'.format(neuron_id,
                                                                 gene_attr))
-        counts = np.ravel(ds.layers[layer][of_interest,:][:,col_idx])
+        counts = np.ravel(ds.layers[layer][of_interest, :][:, col_idx])
         clusters = ds.ca[clust_attr][col_idx]
-        counts = pd.DataFrame({'counts':counts,
-                               'clusterID':clusters})
+        counts = pd.DataFrame({'counts': counts,
+                               'clusterID': clusters})
         counts = counts.groupby(['clusterID']).quantile(q=q)
-        neurons = general_utils.nat_sort(counts.loc[counts['counts']>0].index)
-        neuron_idx = np.isin(ds.ca[clust_attr],neurons)
-        neuron_idx[~col_idx] = False #To ensure validity
+        neurons = general_utils.nat_sort(counts.loc[counts['counts'] > 0].index)
+        neuron_idx = np.isin(ds.ca[clust_attr], neurons)
+        neuron_idx[~col_idx] = False  # To ensure validity
         ds.ca[out_attr] = neuron_idx
     if verbose:
         num_neuron = len(neurons)
         num_total = np.unique(clusters).shape[0]
-        logger.info('Identified {0}/{1} clusters to be neuronal'.format(num_neuron,
-                                                                        num_total))
+        logger.info(
+            'Identified {0}/{1} clusters to be neuronal'.format(num_neuron,
+                                                                num_total))
 
-def calculate_10X_library(loom_file,
+
+def calculate_10x_library(loom_file,
                           layer,
                           out_attr,
-                          col_attr = None,
-                          row_attr = None,
-                          batch_size = 512,
-                          verbose = False):
+                          col_attr=None,
+                          row_attr=None,
+                          batch_size=512,
+                          verbose=False):
     """
     Obtains number of UMIs per cell
     
@@ -257,41 +265,42 @@ def calculate_10X_library(loom_file,
         logger.info('Determining median number of UMIs')
         t0 = time.time()
     # Get indices
-    col_idx = loom_utils.get_attr_index(loom_file = loom_file,
-                                        attr = col_attr,
-                                        columns = True,
-                                        as_bool = True,
-                                        inverse = False)
-    row_idx = loom_utils.get_attr_index(loom_file = loom_file,
-                                        attr = row_attr,
-                                        columns = False,
-                                        as_bool = True,
-                                        inverse = False)
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=col_attr,
+                                        columns=True,
+                                        as_bool=True,
+                                        inverse=False)
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=row_attr,
+                                        columns=False,
+                                        as_bool=True,
+                                        inverse=False)
     # Get library sizes
     layers = loom_utils.make_layer_list(layer)
     with loompy.connect(loom_file) as ds:
-        lib_size = np.zeros((ds.shape[1],),dtype=int)
-        for (_,selection,view) in ds.scan(items = col_idx,
-                                          axis = 1,
-                                          layers = layers,
-                                          batch_size = batch_size):
-            lib_size[selection] = view.layers[layer][row_idx,:].sum(0)
+        lib_size = np.zeros((ds.shape[1],), dtype=int)
+        for (_, selection, view) in ds.scan(items=col_idx,
+                                            axis=1,
+                                            layers=layers,
+                                            batch_size=batch_size):
+            lib_size[selection] = view.layers[layer][row_idx, :].sum(0)
         ds.ca[out_attr] = lib_size
     if verbose:
         t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0,t1)
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
         logger.info('Obtained library sizes in {0:.2f} {1}'.format(time_run,
                                                                    time_fmt))
-        
+
+
 def normalize_10x(loom_file,
                   in_layer,
                   out_layer,
                   size_attr,
-                  gen_size = False,
-                  col_attr = None,
-                  row_attr = None,
-                  batch_size = 512,
-                  verbose = False):
+                  gen_size=False,
+                  col_attr=None,
+                  row_attr=None,
+                  batch_size=512,
+                  verbose=False):
     """
     Normalizes 10X data per Zheng (2017) Nature Communications
         https://doi.org/10.1038/ncomms14049
@@ -313,42 +322,42 @@ def normalize_10x(loom_file,
         t0 = time.time()
     # Get library sizes
     if gen_size:
-        calculate_10X_library(loom_file = loom_file,
-                              layer = in_layer,
-                              out_attr = size_attr,
-                              col_attr = col_attr,
-                              row_attr = row_attr,
-                              batch_size = batch_size,
-                              verbose = verbose)
+        calculate_10x_library(loom_file=loom_file,
+                              layer=in_layer,
+                              out_attr=size_attr,
+                              col_attr=col_attr,
+                              row_attr=row_attr,
+                              batch_size=batch_size,
+                              verbose=verbose)
     # Get indices
-    col_idx = loom_utils.get_attr_index(loom_file = loom_file,
-                                        attr = col_attr,
-                                        columns = True,
-                                        as_bool = True,
-                                        inverse = False)
-    row_idx = loom_utils.get_attr_index(loom_file = loom_file,
-                                        attr = row_attr,
-                                        columns = False,
-                                        as_bool = True,
-                                        inverse = True)
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=col_attr,
+                                        columns=True,
+                                        as_bool=True,
+                                        inverse=False)
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=row_attr,
+                                        columns=False,
+                                        as_bool=True,
+                                        inverse=True)
     # Normalize counts
     layers = loom_utils.make_layer_list(in_layer)
     with loompy.connect(loom_file) as ds:
         med_lib = np.median(ds.ca[size_attr][col_idx])
-        ds.layers[out_layer] = sparse.coo_matrix(ds.shape,dtype=float)
-        for (_,selection,view) in ds.scan(axis = 1,
-                                          items = col_idx,
-                                          layers = layers,
-                                          batch_size = batch_size):
+        ds.layers[out_layer] = sparse.coo_matrix(ds.shape, dtype=float)
+        for (_, selection, view) in ds.scan(axis=1,
+                                            items=col_idx,
+                                            layers=layers,
+                                            batch_size=batch_size):
             # Get data
-            dat = view.layers[in_layer][:,:]
-            dat[row_idx,:] = 0 # Set problem features to be zero
+            dat = view.layers[in_layer][:, :]
+            dat[row_idx, :] = 0  # Set problem features to be zero
             # Scale data
-            normalized = np.divide(dat,view.ca[size_attr]) * med_lib
-            ds.layers[out_layer][:,selection] = normalized
+            normalized = np.divide(dat, view.ca[size_attr]) * med_lib
+            ds.layers[out_layer][:, selection] = normalized
     # Report finished
     if verbose:
         t1 = time.time()
-        time_run,time_fmt = general_utils.format_run_time(t0,t1)
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
         logger.info('Normalized 10X in {0:.2f} {1}'.format(time_run,
                                                            time_fmt))

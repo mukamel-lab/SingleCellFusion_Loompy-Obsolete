@@ -17,13 +17,14 @@ from . import general_utils
 from . import statistics
 
 # Start log
-logging.basicConfig(level = logging.INFO)
-logger = logging.getLogger(__name__) 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 def prep_pca(view,
              layer,
              row_idx,
-             scale_attr = None):
+             scale_attr=None):
     """
     Performs data processing for PCA on a given layer
     
@@ -36,24 +37,24 @@ def prep_pca(view,
     
     Returns:
         dat (matrix): Scaled data for PCA
-    """  
-    dat = view.layers[layer][row_idx,:].copy()
+    """
+    dat = view.layers[layer][row_idx, :].copy()
     if scale_attr:
         rel_scale = view.ca[scale_attr]
         dat = np.divide(dat, rel_scale)
     dat = dat.transpose()
     return dat
-        
+
 
 def batch_pca(loom_file,
               layer,
-              out_attr = 'PCA',
-              col_attr = None,
-              row_attr = None,
-              scale_attr = None,
-              n_comp = 50,
-              batch_size = 512,
-              verbose = False):
+              out_attr='PCA',
+              col_attr=None,
+              row_attr=None,
+              scale_attr=None,
+              n_comp=50,
+              batch_size=512,
+              verbose=False):
     """
     Performs incremental PCA on a loom file
     
@@ -76,62 +77,65 @@ def batch_pca(loom_file,
     if verbose:
         logger.info('Fitting PCA')
         t_start = time.time()
-    pca = IncrementalPCA(n_components = n_comp)
+    pca = IncrementalPCA(n_components=n_comp)
     with loompy.connect(loom_file) as ds:
-        ds.ca[out_attr] = np.zeros((ds.shape[1],n_comp),dtype=float)
-        N = ds.ca[out_attr].shape[0]
+        ds.ca[out_attr] = np.zeros((ds.shape[1], n_comp), dtype=float)
+        n = ds.ca[out_attr].shape[0]
         # Get column and row indices
-        col_idx = loom_utils.get_attr_index(loom_file = loom_file, 
-                                               attr = col_attr,
-                                               columns = True, 
-                                               inverse = False)
-        row_idx = loom_utils.get_attr_index(loom_file = loom_file, 
-                                               attr = row_attr,
-                                               columns = False, 
-                                               inverse = False)
+        col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                            attr=col_attr,
+                                            columns=True,
+                                            inverse=False)
+        row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                            attr=row_attr,
+                                            columns=False,
+                                            inverse=False)
         # Fit model
-        layers = loom_utils.make_layer_list(layers = layer)
-        for (_, _, view) in ds.scan(items = col_idx, 
-                                    layers = layers,
-                                    axis = 1, 
-                                    batch_size = batch_size):
-            dat = prep_pca(view = view,
-                           layer = layer,
-                           row_idx = row_idx,
-                           scale_attr = scale_attr)
+        layers = loom_utils.make_layer_list(layers=layer)
+        for (_, _, view) in ds.scan(items=col_idx,
+                                    layers=layers,
+                                    axis=1,
+                                    batch_size=batch_size):
+            dat = prep_pca(view=view,
+                           layer=layer,
+                           row_idx=row_idx,
+                           scale_attr=scale_attr)
             pca.partial_fit(dat)
         if verbose:
             t_fit = time.time()
-            time_run, time_fmt = general_utils.format_run_time(t_start,t_fit)
-            logger.info('Fit PCA in {0:.2f} {1}'.format(time_run,time_fmt))
+            time_run, time_fmt = general_utils.format_run_time(t_start, t_fit)
+            logger.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
         # Transform
-        for (_, selection, view) in ds.scan(items = col_idx, 
-                                    layers = layers,
-                                    axis = 1, 
-                                    batch_size = batch_size):
-            dat = prep_pca(view = view,
-                           layer = layer,
-                           row_idx = row_idx,
-                           scale_attr = scale_attr)
+        for (_, selection, view) in ds.scan(items=col_idx,
+                                            layers=layers,
+                                            axis=1,
+                                            batch_size=batch_size):
+            dat = prep_pca(view=view,
+                           layer=layer,
+                           row_idx=row_idx,
+                           scale_attr=scale_attr)
             dat = pca.transform(dat)
-            mask = selection == np.arange(N)[:,None]
+            mask = selection == np.arange(n)[:, None]
             ds.ca[out_attr] += mask.dot(dat)
         # Add to file
         if col_attr:
             ds.ca['Valid_{}'.format(out_attr)] = ds.ca[col_attr]
         else:
-            ds.ca['Valid_{}'.format(out_attr)] = np.ones((ds.shape[1],), dtype = int)
+            ds.ca['Valid_{}'.format(out_attr)] = np.ones((ds.shape[1],),
+                                                         dtype=int)
         # Log
         if verbose:
             t_tran = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_fit, t_tran)
-            logger.info('Reduced dimensions in {0:.2f} {1}'.format(time_run,time_fmt))
-            
+            logger.info(
+                'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
+
+
 def prep_pca_contexts(view,
-                      layer_dict = dict(),
-                      cell_dict = None,
-                      global_dict = None,
-                      row_dict = None):
+                      layer_dict,
+                      cell_dict=None,
+                      global_dict=None,
+                      row_dict=None):
     """
     Performs data processing for PCA with multiple contexts
     
@@ -139,24 +143,24 @@ def prep_pca_contexts(view,
         view (object): Slice of loom file
         layer_dict (dict): Dictionary of layers to include
         cell_dict (dict): Attribute containing per cell levels
-            Typically, used with methylation where this is the cell's global mC/C
+            Typically, used with methylation (cell's global mC/C)
         global_dict (dict): Context specific scale
             Typically this is the std over all cells/features
         row_dict (dict): Context specific attributes to restrict features by
     
     Returns:
-        comb_layers (matrix): Combined, scaled mC/C for contexts specified by layers  
+        comb_layers (matrix): Combined, scaled data
     """
-                      
+
     # Handle individual layers
     comb_layers = []
     for key in layer_dict:
         layer = layer_dict[key]
         row_idx = row_dict[key]
-        tmp = view.layers[layer][row_idx,:].copy()
+        tmp = view.layers[layer][row_idx, :].copy()
         if cell_dict:
             rel_scale = view.ca[cell_dict[key]]
-            tmp = np.divide(tmp,rel_scale)
+            tmp = np.divide(tmp, rel_scale)
         if global_dict:
             tmp = tmp / global_dict[key]
         comb_layers.append(tmp)
@@ -165,16 +169,17 @@ def prep_pca_contexts(view,
     # Transpose for PCA
     comb_layers = comb_layers.transpose()
     return comb_layers
-        
+
+
 def batch_pca_contexts(loom_file,
                        layers,
-                       out_attr = 'PCA',
-                       col_attrs = None,
-                       row_attrs = None,
-                       scale_attrs = None,
-                       n_comp = 50,
-                       batch_size = 512,
-                       verbose = False):
+                       out_attr='PCA',
+                       col_attrs=None,
+                       row_attrs=None,
+                       scale_attrs=None,
+                       n_comp=50,
+                       batch_size=512,
+                       verbose=False):
     """
     Performs incremental PCA, using a combination of different contexts
         Typically used to perform PCA using CG and CH
@@ -186,7 +191,7 @@ def batch_pca_contexts(loom_file,
             Valid_{out_attr} will be added to indicate used cells
         col_attrs (list): List of attributes specifying cells to use
         row_attrs (list): List of attributes specifying rows to use
-        scale_attrs (list): List of attributes specifying per cell scaling factors
+        scale_attrs (list): Attributes specifying per cell scaling factors
         n_comp (int): Number of components for PCA
         batch_size (int): Number of elements per chunk
         verbose (bool): If true, print logging messages
@@ -204,102 +209,107 @@ def batch_pca_contexts(loom_file,
     col_idx = dict()
     for i in range(len(layers)):
         layer_dict[i] = layers[i]
-        if isinstance(col_attrs,str):
-            col_dict[i] =  col_attrs
-        elif isinstance(col_attrs,list):
+        if isinstance(col_attrs, str):
+            col_dict[i] = col_attrs
+        elif isinstance(col_attrs, list):
             col_dict[i] = col_attrs[i]
         else:
             col_dict[i] = None
-        col_idx[i] = loom_utils.get_attr_index(loom_file = loom_file,
-                                               attr = col_dict[i],
-                                               columns = True,
-                                               as_bool = True,
-                                               inverse = False)
+        col_idx[i] = loom_utils.get_attr_index(loom_file=loom_file,
+                                               attr=col_dict[i],
+                                               columns=True,
+                                               as_bool=True,
+                                               inverse=False)
         if row_attrs is None:
             row_dict[i] = None
         else:
             row_dict[i] = row_attrs[i]
-        row_idx[i] = loom_utils.get_attr_index(loom_file = loom_file,
-                                               attr = row_dict[i],
-                                               columns = False,
-                                               as_bool = True,
-                                               inverse = False)
+        row_idx[i] = loom_utils.get_attr_index(loom_file=loom_file,
+                                               attr=row_dict[i],
+                                               columns=False,
+                                               as_bool=True,
+                                               inverse=False)
         if scale_attrs is not None:
             cell_dict[i] = scale_attrs[i]
     # Get selected cells
     valid_attr = 'Valid_{}'.format(out_attr)
     with loompy.connect(loom_file) as ds:
-        comb_idx = np.ones((ds.shape[1],), dtype = bool)
+        comb_idx = np.ones((ds.shape[1],), dtype=bool)
         for key in col_dict:
-            comb_idx = np.logical_and(comb_idx,col_idx[key])
+            comb_idx = np.logical_and(comb_idx, col_idx[key])
         ds.ca[valid_attr] = comb_idx.astype(int)
     # Get layer specific scaling factor (standard deviation)
     global_dict = dict()
     for key in layer_dict:
-        _, global_dict[key] = statistics.batch_mean_and_std(loom_file = loom_file,
-                                                                 layer = layer_dict[key],
-                                                                 axis = None,
-                                                                 col_attr = col_dict[key],
-                                                                 row_attr = row_dict[key],
-                                                                 batch_size = batch_size,
-                                                                 verbose = verbose)
+        _, global_dict[key] = statistics.batch_mean_and_std(loom_file=loom_file,
+                                                            layer=layer_dict[
+                                                                key],
+                                                            axis=None,
+                                                            col_attr=col_dict[
+                                                                key],
+                                                            row_attr=row_dict[
+                                                                key],
+                                                            batch_size=batch_size,
+                                                            verbose=verbose)
     # Perform PCA
-    layers = loom_utils.make_layer_list(layers = layers)
-    pca = IncrementalPCA(n_components = n_comp)
+    layers = loom_utils.make_layer_list(layers=layers)
+    pca = IncrementalPCA(n_components=n_comp)
     with loompy.connect(loom_file) as ds:
-        ds.ca[out_attr] = np.zeros((ds.shape[1],n_comp),dtype=float)
-        N = ds.ca[out_attr].shape[0]
+        ds.ca[out_attr] = np.zeros((ds.shape[1], n_comp), dtype=float)
+        n = ds.ca[out_attr].shape[0]
         # Fit model
-        for (_, _, view) in ds.scan(items = comb_idx, 
-                                    axis = 1, 
-                                    layers = layers,
-                                    batch_size = batch_size):
+        for (_, _, view) in ds.scan(items=comb_idx,
+                                    axis=1,
+                                    layers=layers,
+                                    batch_size=batch_size):
             comb_layers = prep_pca_contexts(view,
-                                            layer_dict = layer_dict,
-                                            cell_dict = cell_dict,
-                                            global_dict = global_dict,
-                                            row_dict = row_idx)
+                                            layer_dict=layer_dict,
+                                            cell_dict=cell_dict,
+                                            global_dict=global_dict,
+                                            row_dict=row_idx)
             pca.partial_fit(comb_layers)
         if verbose:
             t_fit = time.time()
-            time_run, time_fmt = general_utils.format_run_time(t_start,t_fit)
-            logger.info('Fit PCA in {0:.2f} {1}'.format(time_run,time_fmt))
+            time_run, time_fmt = general_utils.format_run_time(t_start, t_fit)
+            logger.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
         # Transform
-        for (_, selection, view) in ds.scan(items = comb_idx, 
-                                    axis = 1, 
-                                    layers = layers,
-                                    batch_size = batch_size):
+        for (_, selection, view) in ds.scan(items=comb_idx,
+                                            axis=1,
+                                            layers=layers,
+                                            batch_size=batch_size):
             comb_layers = prep_pca_contexts(view,
-                                            layer_dict = layer_dict,
-                                            cell_dict = cell_dict,
-                                            global_dict = global_dict,
-                                            row_dict = row_idx)
+                                            layer_dict=layer_dict,
+                                            cell_dict=cell_dict,
+                                            global_dict=global_dict,
+                                            row_dict=row_idx)
             comb_layers = pca.transform(comb_layers)
-            mask = selection == np.arange(N)[:,None]
+            mask = selection == np.arange(n)[:, None]
             ds.ca[out_attr] += mask.dot(comb_layers)
         # Log
         if verbose:
             t_tran = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_fit, t_tran)
-            logger.info('Reduced dimensions in {0:.2f} {1}'.format(time_run,time_fmt))
-                        
+            logger.info(
+                'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
+
+
 def run_tsne(loom_file,
              cell_attr,
-             out_attr = 'tsne',
-             valid_attr = None,
-             gen_pca = False,
-             pca_attr = None,
-             row_attr = None,
-             scale_attr = None,
-             n_comp = 50,
-             layer = '',
-             perp = 30,
-             n_tsne = 2,
-             n_proc = 1,
-             n_iter = 1000,
-             batch_size = 512,
-             seed = 23,
-             verbose = False):
+             out_attr='tsne',
+             valid_attr=None,
+             gen_pca=False,
+             pca_attr=None,
+             row_attr=None,
+             scale_attr=None,
+             n_comp=50,
+             layer='',
+             perp=30,
+             n_tsne=2,
+             n_proc=1,
+             n_iter=1000,
+             batch_size=512,
+             seed=23,
+             verbose=False):
     """
     Generates tSNE coordinates for a given feature matrix
     
@@ -308,7 +318,7 @@ def run_tsne(loom_file,
         cell_attr (str): Attribute specifying cell IDs
             Convention is CellID
         out_attr (str): Attribute for output tSNE data
-            coordinates will be saved as {out_attr}_x, {out_attr}_y, ({out_attr}_z)
+            coordinates will be saved as {out_attr}_x, {out_attr}_y
             valid coordinates (from QC) will be saved as Valid_{out_attr}
         valid_attr (str): Attribute specifying cells to include
         gen_pca (bool): If true, generates PCA
@@ -324,70 +334,74 @@ def run_tsne(loom_file,
         n_iter (int): Number of iterations for tSNE
         batch_size (int): Number of elements per chunk (for PCA)
         seed (int): Random seed
-        verbose (str): If true, print logging statements
+        verbose (bool): If true, print logging statements
     
     """
-    valid_idx = loom_utils.get_attr_index(loom_file = loom_file,
-                                          attr = valid_attr,
+    if n_tsne != 2 or n_tsne != 3:
+        raise ValueError('Unsupported number of tSNE dimensions')
+    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                          attr=valid_attr,
                                           columns=True,
-                                          as_bool = False,
-                                          inverse = False)
+                                          as_bool=False,
+                                          inverse=False)
     with loompy.connect(loom_file) as ds:
         # Perform PCA
         if gen_pca:
             if pca_attr is None:
                 pca_attr = 'PCA'
-            batch_pca(loom_file = loom_file,
-                      layer = layer,
-                      out_attr = pca_attr,
-                      col_attr = valid_attr,
-                      row_attr = row_attr,
-                      scale_attr = scale_attr,
-                      n_comp = n_comp,
-                      batch_size = batch_size,
-                      verbose = verbose)
-            valid_attr = 'Valid_{}'.format(pca_attr)
+            batch_pca(loom_file=loom_file,
+                      layer=layer,
+                      out_attr=pca_attr,
+                      col_attr=valid_attr,
+                      row_attr=row_attr,
+                      scale_attr=scale_attr,
+                      n_comp=n_comp,
+                      batch_size=batch_size,
+                      verbose=verbose)
         # Get components
         components = ds.ca[pca_attr]
-        components = components[valid_idx,:]
-        components = components.copy(order = 'C')
+        components = components[valid_idx, :]
+        components = components.copy(order='C')
         # Get tSNE
         if verbose:
             logger.info('Fitting tSNE')
             t0 = time.time()
         ts = FItSNE(components,
-                    no_dims = n_tsne,
-                    perplexity = perp,
-                    rand_seed = seed,
-                    nthreads = n_proc,
-                    max_iter = n_iter)
+                    no_dims=n_tsne,
+                    perplexity=perp,
+                    rand_seed=seed,
+                    nthreads=n_proc,
+                    max_iter=n_iter)
         # Format for loom
         if n_tsne == 2:
             df_tsne = pd.DataFrame(ts,
-                                   index = ds.ca[cell_attr][valid_idx],
-                                   columns = ['{}_x'.format(out_attr),
-                                              '{}_y'.format(out_attr)])
+                                   index=ds.ca[cell_attr][valid_idx],
+                                   columns=['{}_x'.format(out_attr),
+                                            '{}_y'.format(out_attr)])
         elif n_tsne == 3:
             df_tsne = pd.DataFrame(ts,
-                                   index = ds.ca[cell_attr][valid_idx],
-                                   columns = ['{}_x'.format(out_attr),
-                                              '{}_y'.format(out_attr),
-                                              '{}_z'.format(out_attr)])
-        labels = pd.DataFrame(np.repeat(np.nan,ds.shape[1]),
-                              index = ds.ca[cell_attr],
-                              columns = ['Orig'])
+                                   index=ds.ca[cell_attr][valid_idx],
+                                   columns=['{}_x'.format(out_attr),
+                                            '{}_y'.format(out_attr),
+                                            '{}_z'.format(out_attr)])
+        else:
+            raise ValueError('Failure to catch appropriate n_tsne value')
+        labels = pd.DataFrame(np.repeat(np.nan, ds.shape[1]),
+                              index=ds.ca[cell_attr],
+                              columns=['Orig'])
         labels = pd.merge(labels,
                           df_tsne,
                           left_index=True,
                           right_index=True,
-                          how = 'left')
-        labels = labels.fillna(value = 0)
-        labels = labels.drop(labels = 'Orig',axis = 'columns')
+                          how='left')
+        labels = labels.fillna(value=0)
+        labels = labels.drop(labels='Orig', axis='columns')
         # Add to loom
         for key in labels.columns:
             ds.ca[key] = labels[key].values.astype(float)
-        ds.ca['Valid_{}'.format(out_attr)] = ds.ca[pca_attr]   
+        ds.ca['Valid_{}'.format(out_attr)] = ds.ca[pca_attr]
         if verbose:
             t1 = time.time()
             time_run, time_fmt = general_utils.format_run_time(t0, t1)
-            logger.info('Obtained tSNE in {0:.2f} {1}'.format(time_run,time_fmt)) 
+            logger.info(
+                'Obtained tSNE in {0:.2f} {1}'.format(time_run, time_fmt))
