@@ -20,3 +20,9 @@ Authors
 -------
 
 `SingleCellFusion` was written by `Wayne Doyle <widoyle@ucsd.edu>`_, `Fangming Xie <f7xie@ucsd.edu>`_, `Ethan Armand <earmand@ucsd.edu>`_. All authors are members of the `Mukamel Lab <https://brainome.ucsd.edu>`_.
+
+
+Acknowledgments
+-------
+
+We are grateful for support from the Chan-Zuckerberg Initiative, and from the NIH BRAIN Initiative U19 Center for Epigenomics of the Mouse Brain Atlas (CEMBA).
