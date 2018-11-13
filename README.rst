@@ -1,11 +1,11 @@
 singlecellfusion
 ================
 
-Analyzes single-cell transcriptomic and epigenomic data
+Analyzes single-cell transcriptomic and epigenomic data.
 
 Usage
 -----
-This is a currently unstable form of SingleCellFusion built on a loompy backbone. Function flags will be updated and wrapper functions added in the coming weeks to make SingleCellFusion more user-friendly.
+SingleCellFusion is under active development. This software is built on a loompy backbone. Function flags will be updated and wrapper functions added in the coming weeks to make SingleCellFusion more user-friendly.
 
 Installation
 ------------
