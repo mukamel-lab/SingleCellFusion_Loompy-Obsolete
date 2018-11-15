@@ -363,7 +363,7 @@ def plot_scatter(df_plot,
         df_plot[col_opt] = 'k'
     # Make plot
     fig, ax = plt.subplots(figsize=figsize)
-    if highlight is not None:
+    if highlight:
         prob_idx = df_plot[col_opt] == 'Null'
         ax.scatter(df_plot[x_axis][prob_idx],
                    df_plot[y_axis][prob_idx],
