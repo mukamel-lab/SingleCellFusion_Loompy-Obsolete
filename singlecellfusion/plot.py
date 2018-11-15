@@ -364,18 +364,18 @@ def plot_scatter(df_plot,
     # Make plot
     fig, ax = plt.subplots(figsize=figsize)
     if highlight:
-        prob_idx = df_plot[col_opt] == 'Null'
-        ax.scatter(df_plot[x_axis][prob_idx],
-                   df_plot[y_axis][prob_idx],
+        prob_idx = np.where(df_plot[col_opt] == 'Null')[0]
+        ax.scatter(df_plot[x_axis].iloc[prob_idx].values,
+                   df_plot[y_axis].iloc[prob_idx].values,
                    s=s,
                    c='lightgray',
-                   alpha=0.2,
+                   alpha=0.1,
                    **kwargs)
-        use_idx = np.logical_not(prob_idx)
-        im = ax.scatter(df_plot[x_axis][use_idx],
-                        df_plot[y_axis][use_idx],
+        use_idx = np.where(df_plot[col_opt] != 'Null')[0]
+        im = ax.scatter(df_plot[x_axis].iloc[use_idx].values,
+                        df_plot[y_axis].iloc[use_idx].values,
                         s=s,
-                        c=df_plot[col_opt][use_idx],
+                        c=df_plot[col_opt].iloc[use_idx].values,
                         **kwargs)
     else:
         im = ax.scatter(df_plot[x_axis],
@@ -550,13 +550,12 @@ def scatter_attr(loom_file,
             pass
         else:
             raise ValueError('Unsupported type for highlight')
-        hl_idx = pd.DataFrame(np.arange(df_plot.shape[0]),
+        col_idx = np.repeat([True], repeats = df_plot.shape[0])
+        hl_idx = pd.DataFrame(np.repeat([True],repeats=df_plot.shape[0]),
                               index=df_plot[plot_attr].values,
-                              columns=['orig'])
-        hl_idx = hl_idx.loc[highlight]
-        col_opts = df_plot['color'].values
-        col_opts[hl_idx['orig'].values] = 'Null'
-        df_plot['color'] = col_opts
+                              columns=['idx'])
+        hl_idx['idx'].loc[highlight] = False
+        df_plot['color'].loc[hl_idx['idx'].values] = 'Null'
         highlight = True
     else:
         highlight = False
