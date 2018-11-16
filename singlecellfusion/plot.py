@@ -378,10 +378,10 @@ def plot_scatter(df_plot,
                         c=df_plot[col_opt].iloc[use_idx].values,
                         **kwargs)
     else:
-        im = ax.scatter(df_plot[x_axis],
-                        df_plot[y_axis],
+        im = ax.scatter(df_plot[x_axis].values,
+                        df_plot[y_axis].values,
                         s=s,
-                        c=df_plot[col_opt],
+                        c=df_plot[col_opt].values,
                         **kwargs)
     # Modify figure
     if title is not None:
