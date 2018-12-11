@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from sklearn.decomposition import IncrementalPCA
 from fitsne import FItSNE
+import umap
 import logging
 import time
 from . import loom_utils
@@ -17,8 +18,7 @@ from . import general_utils
 from . import statistics
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+decomp_log = logging.getLogger(__name__)
 
 
 def prep_pca(view,
@@ -39,7 +39,7 @@ def prep_pca(view,
         dat (matrix): Scaled data for PCA
     """
     dat = view.layers[layer][row_idx, :].copy()
-    if scale_attr:
+    if scale_attr is not None:
         rel_scale = view.ca[scale_attr]
         dat = np.divide(dat, rel_scale)
     dat = dat.transpose()
@@ -75,7 +75,7 @@ def batch_pca(loom_file,
         Adds quality control to ds.ca.Valid_{out_attr}
     """
     if verbose:
-        logger.info('Fitting PCA')
+        decomp_log.info('Fitting PCA')
         t_start = time.time()
     pca = IncrementalPCA(n_components=n_comp)
     with loompy.connect(loom_file) as ds:
@@ -104,7 +104,7 @@ def batch_pca(loom_file,
         if verbose:
             t_fit = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_start, t_fit)
-            logger.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
+            decomp_log.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
         # Transform
         for (_, selection, view) in ds.scan(items=col_idx,
                                             layers=layers,
@@ -127,7 +127,7 @@ def batch_pca(loom_file,
         if verbose:
             t_tran = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_fit, t_tran)
-            logger.info(
+            decomp_log.info(
                 'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
@@ -198,7 +198,7 @@ def batch_pca_contexts(loom_file,
         
     """
     if verbose:
-        logger.info('Fitting PCA')
+        decomp_log.info('Fitting PCA')
         t_start = time.time()
     # Make dictionary of values
     layer_dict = dict()
@@ -271,7 +271,7 @@ def batch_pca_contexts(loom_file,
         if verbose:
             t_fit = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_start, t_fit)
-            logger.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
+            decomp_log.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
         # Transform
         for (_, selection, view) in ds.scan(items=comb_idx,
                                             axis=1,
@@ -289,7 +289,7 @@ def batch_pca_contexts(loom_file,
         if verbose:
             t_tran = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_fit, t_tran)
-            logger.info(
+            decomp_log.info(
                 'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
@@ -301,7 +301,7 @@ def run_tsne(loom_file,
              pca_attr=None,
              row_attr=None,
              scale_attr=None,
-             n_comp=50,
+             n_pca=50,
              layer='',
              perp=30,
              n_tsne=2,
@@ -327,7 +327,7 @@ def run_tsne(loom_file,
         row_attr (str): Attribute specifying features to include
         layer (str): Layer in loom file containing data for PCA
         scale_attr (str): Optional, attribute specifying cell scaling factor
-        n_comp (int): Number of components for PCA
+        n_pca (int): Number of components for PCA
         perp (int): Perplexity
         n_tsne (int): Number of components for tSNE
         n_proc (int): Number of processors to use for tSNE
@@ -337,7 +337,7 @@ def run_tsne(loom_file,
         verbose (bool): If true, print logging statements
     
     """
-    if n_tsne != 2 or n_tsne != 3:
+    if n_tsne != 2 and n_tsne != 3:
         raise ValueError('Unsupported number of tSNE dimensions')
     valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
                                           attr=valid_attr,
@@ -355,7 +355,7 @@ def run_tsne(loom_file,
                       col_attr=valid_attr,
                       row_attr=row_attr,
                       scale_attr=scale_attr,
-                      n_comp=n_comp,
+                      n_comp=n_pca,
                       batch_size=batch_size,
                       verbose=verbose)
         # Get components
@@ -364,7 +364,7 @@ def run_tsne(loom_file,
         components = components.copy(order='C')
         # Get tSNE
         if verbose:
-            logger.info('Fitting tSNE')
+            decomp_log.info('Fitting tSNE')
             t0 = time.time()
         ts = FItSNE(components,
                     no_dims=n_tsne,
@@ -403,5 +403,117 @@ def run_tsne(loom_file,
         if verbose:
             t1 = time.time()
             time_run, time_fmt = general_utils.format_run_time(t0, t1)
-            logger.info(
+            decomp_log.info(
                 'Obtained tSNE in {0:.2f} {1}'.format(time_run, time_fmt))
+
+
+def run_umap(loom_file,
+             cell_attr,
+             out_attr='umap',
+             valid_attr=None,
+             gen_pca=False,
+             pca_attr=None,
+             row_attr=None,
+             scale_attr=None,
+             n_pca=50,
+             layer='',
+             n_umap=2,
+             min_dist=0.1,
+             n_neighbors=15,
+             metric='euclidean',
+             batch_size=512,
+             verbose=False):
+    """
+    Generates UMAP coordinates for a given feature matrix
+
+    Args:
+        loom_file (str): Path to loom file
+        cell_attr (str): Attribute specifying cell IDs
+            Convention is CellID
+        out_attr (str): Attribute for output tSNE data
+            coordinates will be saved as {out_attr}_x, {out_attr}_y
+            valid coordinates (from QC) will be saved as Valid_{out_attr}
+        valid_attr (str): Attribute specifying cells to include
+        gen_pca (bool): If true, generates PCA
+        pca_attr (str): Attribute containing PCs (optional)
+            If not provided, added to loom_file under attribute PCA
+        row_attr (str): Attribute specifying features to include
+        layer (str): Layer in loom file containing data for PCA
+        scale_attr (str): Optional, attribute specifying cell scaling factor
+        n_pca (int): Number of components for PCA
+        layer (str): Layer in loom_file containing data
+        n_umap (int): Number of reduced components for UMAP
+        min_dist (float): Minimum distance (0-1) in UMAP space for two points
+        n_neighbors (int): Size of local neighborhood in UMAP
+        metric (str): How distance is calculated for UMAP
+        batch_size (int): Number of elements per chunk (for PCA)
+        verbose (bool): If true, print logging statements
+
+    """
+    if n_umap != 2 and n_umap != 3:
+        raise ValueError('Unsupported number of UMAP dimensions')
+    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                          attr=valid_attr,
+                                          columns=True,
+                                          as_bool=False,
+                                          inverse=False)
+    with loompy.connect(loom_file) as ds:
+        # Perform PCA
+        if gen_pca:
+            if pca_attr is None:
+                pca_attr = 'PCA'
+            batch_pca(loom_file=loom_file,
+                      layer=layer,
+                      out_attr=pca_attr,
+                      col_attr=valid_attr,
+                      row_attr=row_attr,
+                      scale_attr=scale_attr,
+                      n_comp=n_pca,
+                      batch_size=batch_size,
+                      verbose=verbose)
+        # Get components
+        components = ds.ca[pca_attr]
+        components = components[valid_idx, :]
+        components = components.copy(order='C')
+        # Get UMAP
+        if verbose:
+            decomp_log.info('Fitting UMAP')
+            t0 = time.time()
+        fit = umap.UMAP(n_neighbors=n_neighbors,
+                        min_dist=min_dist,
+                        n_components=n_umap,
+                        metric=metric)
+        us = fit.fit_transform(components)
+        # Format for loom
+        if n_umap == 2:
+            df_umap = pd.DataFrame(us,
+                                   index=ds.ca[cell_attr][valid_idx],
+                                   columns=['{}_x'.format(out_attr),
+                                            '{}_y'.format(out_attr)])
+        elif n_umap == 3:
+            df_umap = pd.DataFrame(us,
+                                   index=ds.ca[cell_attr][valid_idx],
+                                   columns=['{}_x'.format(out_attr),
+                                            '{}_y'.format(out_attr),
+                                            '{}_z'.format(out_attr)])
+        else:
+            raise ValueError('Failure to catch appropriate n_umap value')
+        labels = pd.DataFrame(np.repeat(np.nan, ds.shape[1]),
+                              index=ds.ca[cell_attr],
+                              columns=['Orig'])
+        labels = pd.merge(labels,
+                          df_umap,
+                          left_index=True,
+                          right_index=True,
+                          how='left')
+        labels = labels.fillna(value=0)
+        labels = labels.drop(labels='Orig', axis='columns')
+        # Add to loom
+        for key in labels.columns:
+            ds.ca[key] = labels[key].values.astype(float)
+        ds.ca['Valid_{}'.format(out_attr)] = ds.ca[pca_attr]
+        if verbose:
+            t1 = time.time()
+            time_run, time_fmt = general_utils.format_run_time(t0, t1)
+            decomp_log.info(
+                'Obtained UMAP in {0:.2f} {1}'.format(time_run, time_fmt))

@@ -18,8 +18,7 @@ from . import general_utils
 from . import decomposition
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+clust_log = logging.getLogger(__name__)
 
 
 def louvain_clustering(loom_file,
@@ -61,18 +60,19 @@ def louvain_clustering(loom_file,
     # Generate graph
     if verbose:
         t0 = time.time()
-        logger.info('Converting to igraph')
+        clust_log.info('Converting to igraph')
     g = graphs.adjacency_to_igraph(adj_mtx=adj_mtx,
                                    directed=directed)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info(
+        clust_log.info(
             'Converted to igraph in {0:.2f} {1}'.format(time_run, time_fmt))
     # Cluster with Louvain
     if verbose:
-        logger.info('Performing clustering with Louvain')
-    louvain.set_rng_seed(seed)
+        clust_log.info('Performing clustering with Louvain')
+    if seed is not None:
+        louvain.set_rng_seed(seed)
     partition1 = louvain.find_partition(g,
                                         louvain.ModularityVertexPartition,
                                         weights=g.es['weight'])
@@ -105,7 +105,8 @@ def louvain_clustering(loom_file,
     if verbose:
         t2 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t1, t2)
-        logger.info('Clustered cells in {0:.2f} {1}'.format(time_run, time_fmt))
+        clust_log.info(
+            'Clustered cells in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
 def louvain_jaccard(loom_file,
@@ -226,3 +227,169 @@ def louvain_jaccard(loom_file,
                        directed=True,
                        seed=seed,
                        verbose=verbose)
+
+
+def cluster_and_reduce(loom_file,
+                       reduce_method=None,
+                       clust_attr='ClusterID',
+                       reduce_attr=None,
+                       n_reduce=2,
+                       cell_attr='CellID',
+                       gen_pca=False,
+                       pca_attr=None,
+                       layer='',
+                       n_pca=50,
+                       scale_attr=None,
+                       gen_knn=False,
+                       neighbor_attr=None,
+                       distance_attr=None,
+                       k=30,
+                       num_trees=50,
+                       knn_metric='euclidean',
+                       gen_jaccard=False,
+                       jaccard_graph=None,
+                       tsne_perp=30,
+                       tsne_iter=1000,
+                       umap_dist=0.1,
+                       umap_neighbors=15,
+                       umap_metric='euclidean',
+                       valid_ca=None,
+                       valid_ra=None,
+                       n_proc=1,
+                       batch_size=512,
+                       seed=23,
+                       verbose=False):
+    """
+    Clusters and reduces data
+    Args:
+        loom_file (str): Path to loom file
+        reduce_method (str): Method for reducing data (pca,tsne,umap)
+            If none, skips data reduction
+        clust_attr (str): Name for output attribute containing clusters
+        reduce_attr (str): Basename of output attributes for reduced data
+            Follows format of {reduced_attr}_{x,y,z}
+        n_reduce (int): Number of components following reduction by reduce_method
+        cell_attr (str): Name of attribute containing unique cell IDs
+        gen_pca (bool): Perform PCA before clustering and later reduction
+        pca_attr (str): Name of column attribute containing PCs
+        layer (str): Name of layer in loom_file containing data for PCA
+        n_pca (int): Number of components for PCA
+        scale_attr (str): Optional, attribute containing per cell scaling factor
+            Typically used with methylation data
+        gen_knn (bool): If true, generate kNN for clustering
+        neighbor_attr (str): Attribute containing kNN neighbor indices
+        distance_attr (str): Attribute containing kNN neighbor distances
+        k (int): Number of nearest neighbors
+        num_trees (int): Number of trees for approximate kNN
+        knn_metric (str): Metric for kNN (from annoy documentation)
+        gen_jaccard (bool): Generate Jaccard-weighted adjacency matrix
+        jaccard_graph (str): Name of col_graph containing Jaccard-weighted matrix
+        tsne_perp (int): Perplexity of tSNE (if reduce_method is tsne)
+        tsne_iter (int): Number of iterations for tSNE
+        umap_dist (float): 0-1 distance for uMAP (if reduce_method is umap)
+        umap_neighbors (int): Number of local neighbors for uMAP
+        umap_metric (str): Distance metric for uMAP
+        valid_ca (str): Attribute specifying valid cells
+        valid_ra (str): Attribute specifying valid rows
+        n_proc (int): Number of processors to use (if reduce_method is tsne)
+        batch_size (int): Size of chunks
+        seed (int): Random seed for clustering
+        verbose (bool): Print logging messages
+    """
+    # Check inputs
+    if n_reduce > 3:
+        clust_log.error('Maximum of three dimensions allowed')
+        raise ValueError
+    if reduce_method.lower() == 'pca':
+        if n_reduce == 0:
+            clust_log.error('n_reduce must be greater than 0')
+            raise ValueError
+        elif n_reduce <= n_pca:
+            pass
+        else:
+            n_pca = n_reduce
+        if reduce_attr == pca_attr:
+            pass
+        elif reduce_attr is None:
+            reduce_attr = pca_attr
+        else:
+            clust_log.warning('reduce_attr, pca_attr mismatch. Duplicating')
+    elif reduce_method.lower() in ['tsne', 'umap']:
+        pass
+    elif reduce_method is None:
+        pass
+    else:
+        clust_log.error('reduce_method is invalid')
+        raise ValueError
+    # Perform clustering
+    louvain_jaccard(loom_file=loom_file,
+                    clust_attr=clust_attr,
+                    cell_attr=cell_attr,
+                    valid_attr=valid_ca,
+                    gen_pca=gen_pca,
+                    pca_attr=pca_attr,
+                    layer=layer,
+                    n_comp=n_pca,
+                    row_attr=valid_ra,
+                    scale_attr=scale_attr,
+                    gen_knn=gen_knn,
+                    neighbor_attr=neighbor_attr,
+                    distance_attr=distance_attr,
+                    k=k,
+                    num_trees=num_trees,
+                    metric=knn_metric,
+                    gen_jaccard=gen_jaccard,
+                    jaccard_graph=jaccard_graph,
+                    batch_size=batch_size,
+                    seed=seed,
+                    verbose=verbose)
+    # Reduce dimensions
+    if reduce_method.lower() == 'pca':
+        red_labels = ['x', 'y', 'z']
+        if pca_attr != reduce_attr:
+            with loompy.connect(loom_file) as ds:
+                for i in np.arange(0, n_reduce):
+                    curr_label = '{0}_{1}'.format(reduce_attr,
+                                                  red_labels[i])
+                    ds.ca[curr_label] = ds.ca[pca_attr][:, i]
+        if verbose:
+            clust_log.info('Finished clustering and PCA reduction')
+    elif reduce_method.lower() == 'tsne':
+        decomposition.run_tsne(loom_file=loom_file,
+                               cell_attr=cell_attr,
+                               out_attr=reduce_attr,
+                               valid_attr=valid_ca,
+                               gen_pca=False,
+                               pca_attr=pca_attr,
+                               row_attr=valid_ra,
+                               scale_attr=scale_attr,
+                               n_pca=50,
+                               layer='',
+                               perp=tsne_perp,
+                               n_tsne=n_reduce,
+                               n_proc=n_proc,
+                               n_iter=tsne_iter,
+                               batch_size=batch_size,
+                               seed=seed,
+                               verbose=verbose)
+    elif reduce_method.lower() == 'umap':
+        decomposition.run_umap(loom_file=loom_file,
+                               cell_attr=cell_attr,
+                               out_attr=reduce_attr,
+                               valid_attr=valid_ca,
+                               gen_pca=False,
+                               pca_attr=pca_attr,
+                               row_attr=valid_ra,
+                               scale_attr=scale_attr,
+                               n_pca=50,
+                               layer='',
+                               n_umap=n_reduce,
+                               min_dist=umap_dist,
+                               n_neighbors=umap_neighbors,
+                               metric=umap_metric,
+                               batch_size=batch_size,
+                               verbose=verbose)
+    elif reduce_method is None:
+        pass
+    else:
+        raise ValueError('Error in preliminary if/else check')

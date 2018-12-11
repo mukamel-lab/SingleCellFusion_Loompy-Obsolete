@@ -17,8 +17,7 @@ from . import general_utils
 from . import loom_utils
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+plot_log = logging.getLogger(__name__)
 
 
 def get_random_colors(n):
@@ -446,7 +445,7 @@ def plot_scatter(df_plot,
             fig.savefig(output,
                         bbox_extra_artists=(l_h,),
                         bbox_inches='tight')
-        logger.info('Saved figure to {}'.format(output))
+        plot_log.info('Saved figure to {}'.format(output))
     if close:
         plt.close()
 
@@ -507,7 +506,7 @@ def scatter_attr(loom_file,
                                         as_bool=False,
                                         inverse=False)
     # Set-up dataframe 
-    with loompy.connect(loom_file) as ds:
+    with loompy.connect(filename=loom_file,mode='r') as ds:
         df_plot = pd.DataFrame(
             {plot_attr: ds.ca[plot_attr][col_idx].astype(str),
              'x_val': ds.ca[x_axis][col_idx].astype(float),
@@ -550,8 +549,7 @@ def scatter_attr(loom_file,
             pass
         else:
             raise ValueError('Unsupported type for highlight')
-        col_idx = np.repeat([True], repeats = df_plot.shape[0])
-        hl_idx = pd.DataFrame(np.repeat([True],repeats=df_plot.shape[0]),
+        hl_idx = pd.DataFrame(np.repeat([True], repeats=df_plot.shape[0]),
                               index=df_plot[plot_attr].values,
                               columns=['idx'])
         hl_idx['idx'].loc[highlight] = False
@@ -693,7 +691,7 @@ def scatter_feature(loom_file,
                                         as_bool=False,
                                         inverse=False)
     # Set-up dataframe 
-    with loompy.connect(loom_file) as ds:
+    with loompy.connect(filename=loom_file,mode='r') as ds:
         feat_idx = np.ravel(np.where(ds.ra[feat_attr] == feat_id))
         if feat_idx.shape[0] > 1:
             raise ValueError('Too many feature matches')

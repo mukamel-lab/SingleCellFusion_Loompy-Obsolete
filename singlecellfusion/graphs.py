@@ -17,8 +17,7 @@ from . import loom_utils
 from . import general_utils
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+graph_log = logging.getLogger(__name__)
 
 
 def generate_knn(loom_file,
@@ -65,7 +64,7 @@ def generate_knn(loom_file,
     # Index observations
     if verbose:
         t0 = time.time()
-        logger.info('Indexing cells')
+        graph_log.info('Indexing cells')
     with loompy.connect(loom_file) as ds:
         n_obs = np.sum(col_idx.shape[0])
         n_feat = ds.ca[dat_attr].shape[1]
@@ -76,7 +75,7 @@ def generate_knn(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info('Indexed in {0:.2f} {1}'.format(time_run, time_fmt))
+        graph_log.info('Indexed in {0:.2f} {1}'.format(time_run, time_fmt))
     # Build the kNN
     knn.build(num_trees)
     batches = np.array_split(np.arange(start=0,
@@ -109,7 +108,7 @@ def generate_knn(loom_file,
     if verbose:
         t2 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t1, t2)
-        logger.info('Generated kNN in {0:.2f} {1}'.format(time_run, time_fmt))
+        graph_log.info('Generated kNN in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
 def generate_adjacency_matrix(loom_file,

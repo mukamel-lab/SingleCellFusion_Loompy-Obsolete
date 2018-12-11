@@ -12,8 +12,55 @@ import pandas as pd
 import logging
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+lu_log = logging.getLogger(__name__)
+
+
+def get_pct(loom_file,
+            num_val,
+            columns=True):
+    if columns:
+        axis = 1
+    else:
+        axis = 0
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        pct = num_val / ds.shape[axis] * 100
+    return pct
+
+
+def check_for_values(loom_file,
+                     values,
+                     component):
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        if component == 'ca':
+            options = ds.ca.keys()
+        elif component == 'ra':
+            options = ds.ra.keys()
+        elif component == 'attr':
+            options = ds.attrs.keys()
+        elif component == 'layers':
+            options = ds.layers.keys()
+        elif component == 'col_graphs':
+            options = ds.col_graphs.keys()
+        elif component == 'row_graphs':
+            options = ds.row_graphs.keys()
+        else:
+            lu_log.error('Invalid component value')
+            raise ValueError
+        if isinstance(values, str):
+            if values is None:
+                pass
+            elif values not in options:
+                lu_log.error('{0} is not in {1}'.format(values,
+                                                        component))
+                raise ValueError
+        elif isinstance(values, list):
+            for value in values:
+                if value is None:
+                    pass
+                elif value not in options:
+                    lu_log.error('{0} is not in {1}'.format(value,
+                                                            component))
+                    raise KeyError
 
 
 def get_attr_index(loom_file,
@@ -110,15 +157,15 @@ def transfer_attributes(loom_source,
         id_destination (str): loom_destination attribute for matching order
             There must be shared values between id_source and id_destination
     """
-    with loompy.connect(loom_source) as ds_src:
-        with loompy.connect(loom_destination) as ds_dest:
+    with loompy.connect(filename=loom_source, mode='r') as ds_src:
+        with loompy.connect(filename=loom_destination) as ds_dest:
             for key in attributes:
                 if key == 'attrs':
                     for attr in attributes[key]:
                         if attr in ds_src.attrs.keys():
                             ds_dest.attrs[attr] = ds_src.attrs[attr]
                         else:
-                            logger.warning('{} not in file'.format(attr))
+                            lu_log.warning('{} not in file'.format(attr))
                 else:
                     if key == 'ca' or key == 'col_graphs':
                         lookup_src = ds_src.ca[id_source]
@@ -155,28 +202,28 @@ def transfer_attributes(loom_source,
                                 tmp = tmp[new_index]
                                 ds_dest.ca[attr] = tmp
                             else:
-                                logger.warning('{} not in file'.format(attr))
+                                lu_log.warning('{} not in file'.format(attr))
                         elif key == 'ra':
                             if attr in ds_src.ra.keys():
                                 tmp = ds_src.ra[attr]
                                 tmp = tmp[new_index]
                                 ds_dest.ra[attr] = tmp
                             else:
-                                logger.warning('{} not in file'.format(attr))
+                                lu_log.warning('{} not in file'.format(attr))
                         elif key == 'col_graphs':
                             if attr in ds_src.col_graphs.keys():
                                 tmp = ds_src.col_graphs[attr].tocsr()
                                 tmp = tmp[new_index]
                                 ds_dest.col_graphs[attr] = tmp
                             else:
-                                logger.warning('{} not in file'.format(attr))
+                                lu_log.warning('{} not in file'.format(attr))
                         elif key == 'row_graphs':
                             if attr in ds_src.row_graphs.keys():
                                 tmp = ds_src.row_graphs[attr].tocsr()
                                 tmp = tmp[new_index, :]
                                 ds_dest.row_graphs[attr] = tmp
                             else:
-                                logger.warning('{} not in file'.format(attr))
+                                lu_log.warning('{} not in file'.format(attr))
                         else:
                             raise ValueError(
                                 'Unsupported attribute {}'.format(key))

@@ -18,8 +18,7 @@ import time
 from . import general_utils
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+io_log = logging.getLogger(__name__)
 
 
 def make_unique_ids(max_number):
@@ -77,7 +76,7 @@ def add_dense(count_file,
     """
     # Start log
     if verbose:
-        logger.info('Adding {0} to {1}'.format(count_file, loom_file))
+        io_log.info('Adding {0} to {1}'.format(count_file, loom_file))
     # Read data
     if feature_axis == 0 or 'row' in feature_axis:
         dat = pd.read_table(filepath_or_buffer=count_file,
@@ -107,7 +106,7 @@ def add_dense(count_file,
     # Save to loom file
     if layer_id != '':
         if append:
-            with loompy.connect(loom_file) as ds:
+            with loompy.connect(filename=loom_file) as ds:
                 ds.add_columns(
                     layers={'': sparse.csc_matrix(dat.shape, dtype=int),
                             layer_id: dat},
@@ -121,7 +120,7 @@ def add_dense(count_file,
                           col_attrs={'CellID': loom_obs})
     else:
         if append:
-            with loompy.connect(loom_file) as ds:
+            with loompy.connect(filename=loom_file) as ds:
                 ds.add_columns(layers={layer_id: dat},
                                row_attrs={'Accession': loom_feat},
                                col_attrs={'CellID': loom_obs})
@@ -179,7 +178,7 @@ def batch_add_sparse(loom_file,
         for key in col_attrs:
             batch_col[key] = col_attrs[key][batch]
         if append:
-            with loompy.connect(loom_file) as ds:
+            with loompy.connect(filename=loom_file) as ds:
                 ds.add_columns(layers=batch_layer,
                                row_attrs=row_attrs,
                                col_attrs=batch_col)
@@ -237,10 +236,10 @@ def h5_to_loom(h5_file,
     if genome is None:
         genome = find_10x_genome(filename=h5_file)
         if verbose:
-            logger.info('The 10x genome is {}'.format(genome))
+            io_log.info('The 10x genome is {}'.format(genome))
     # Get relevant information from file
     if verbose:
-        logger.info('Finding 10x data in h5 file {}'.format(h5_file))
+        io_log.info('Finding 10x data in h5 file {}'.format(h5_file))
         t_search = time.time()
     with tables.open_file(h5_file, 'r') as f:
         try:
@@ -256,8 +255,8 @@ def h5_to_loom(h5_file,
             t_write = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_search,
                                                                t_write)
-            logger.info('Found data in {0:.2f} {1}'.format(time_run, time_fmt))
-            logger.info('Adding data to loom_file {}'.format(loom_file))
+            io_log.info('Found data in {0:.2f} {1}'.format(time_run, time_fmt))
+            io_log.info('Adding data to loom_file {}'.format(loom_file))
         matrix = sparse.csc_matrix((dsets['data'],
                                     dsets['indices'],
                                     dsets['indptr']),
@@ -277,5 +276,5 @@ def h5_to_loom(h5_file,
             t_end = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_write,
                                                                t_end)
-            logger.info('Wrote loom file in {0:.2f} {1}'.format(time_run,
+            io_log.info('Wrote loom file in {0:.2f} {1}'.format(time_run,
                                                                 time_fmt))

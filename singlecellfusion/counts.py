@@ -16,7 +16,6 @@ from . import general_utils
 from . import loom_utils
 
 # Start log
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -313,7 +312,7 @@ def normalize_10x(loom_file,
         gen_size (bool): If true, generate library sizes and save as size_attr
         col_attr (str): Optional, name of attribute for restricting columns
         row_attr (str): Optional, name of attribute for restricting rows
-        batch_size (bool): Size of chunks
+        batch_size (int): Size of chunks
         verbose (bool): If true, print logging messages
     """
     # Start log

@@ -15,8 +15,7 @@ from . import general_utils
 from . import loom_utils
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+mc_log = logging.getLogger(__name__)
 
 
 def calculate_mcc(loom_file,
@@ -52,10 +51,10 @@ def calculate_mcc(loom_file,
     """
     # Handle inputs
     if verbose:
-        logger.info('Calculating mC/C')
+        mc_log.info('Calculating mC/C')
         t0 = time.time()
     layers = loom_utils.make_layer_list(layers=[mc_layer, c_layer])
-    with loompy.connect(loom_file) as ds:
+    with loompy.connect(filename=loom_file,mode='r') as ds:
         for layer in layers:
             if layer in ds.layers.keys():
                 pass
@@ -75,7 +74,7 @@ def calculate_mcc(loom_file,
         old_mean = None
         old_obs = None
         first_iter = True
-        with loompy.connect(loom_file) as ds:
+        with loompy.connect(filename=loom_file,mode='r') as ds:
             for (_, selection, view) in ds.scan(axis=1,
                                                 layers=layers,
                                                 items=col_idx,
@@ -101,7 +100,7 @@ def calculate_mcc(loom_file,
         means[row_idx] = 0
         if np.max(means) > 1.0:
             raise ValueError('mC/C is greater than 1!')
-    with loompy.connect(loom_file) as ds:
+    with loompy.connect(filename=loom_file) as ds:
         ds.layers[out_layer] = sparse.coo_matrix(ds.shape, dtype=float)
         valid_layer = 'Valid_{}'.format(out_layer)
         ds.layers[valid_layer] = sparse.coo_matrix(ds.shape, dtype=float)
@@ -126,4 +125,4 @@ def calculate_mcc(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info('Calculated mC/C in {0:.2f} {1}'.format(time_run, time_fmt))
+        mc_log.info('Calculated mC/C in {0:.2f} {1}'.format(time_run, time_fmt))

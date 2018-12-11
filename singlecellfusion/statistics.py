@@ -14,8 +14,7 @@ from . import general_utils
 from . import loom_utils
 
 # Start log
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+stat_log = logging.getLogger(__name__)
 
 
 def batch_mean_and_std(loom_file,
@@ -67,11 +66,11 @@ def batch_mean_and_std(loom_file,
         loom_axis = axis
     # Start log
     if verbose:
-        logger.info('Calculating statistics for {}'.format(loom_file))
+        stat_log.info('Calculating statistics for {}'.format(loom_file))
         t0 = time.time()
     # Get indices
     layers = loom_utils.make_layer_list(layers=layer)
-    with loompy.connect(loom_file) as ds:
+    with loompy.connect(filename=loom_file,mode='r') as ds:
         for (_, selection, view) in ds.scan(axis=loom_axis,
                                             layers=layers,
                                             batch_size=batch_size):
@@ -126,6 +125,6 @@ def batch_mean_and_std(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info(
+        stat_log.info(
             'Calculated statistics in {0:.2f} {1}'.format(time_run, time_fmt))
     return [mean, std]
