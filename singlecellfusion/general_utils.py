@@ -9,8 +9,53 @@ import numpy as np
 import os
 import re
 from scipy import sparse
+import logging
+
+# Start log
+gu_log = logging.getLogger(__name__)
 
 bin_dir = os.path.dirname(os.path.realpath(__file__))
+
+
+def round_unit(x,
+               units=10,
+               method='ceil'):
+    """
+    Rounds a number to the nearest unit
+
+    Args:
+        x (int/float): A number
+        units (int): Nearest base to round to
+        method (str): Method for rounding
+            ceil: Round up
+            floor: Round down
+            nearest: Round up or down, whichever is closest
+                If equal, performs ceil
+
+    Returns:
+        y (int): x to the nearest unit
+
+    Based off of Parker's answer on StackOverflow:
+    https://stackoverflow.com/questions/26454649/...
+    python-round-up-to-the-nearest-ten
+    """
+    if method == 'ceil':
+        y = int(np.ceil(x / units)) * units
+    elif method == 'floor':
+        y = int(np.floor(x / units)) * units
+    elif method == 'nearest':
+        highest = int(np.ceil(x / units)) * units
+        lowest = int(np.floor(x / units)) * units
+        high_diff = np.abs(highest - x)
+        low_diff = np.abs(lowest - x)
+        if lowest == 0 or high_diff < low_diff:
+            y = highest
+        else:
+            y = lowest
+    else:
+        gu_log.error('Improper value for method')
+        raise ValueError
+    return y
 
 
 def alphanum_key(item):
@@ -116,7 +161,7 @@ def get_mouse_chroms(prefix=False,
         for key in chrom_dict.keys():
             new_key = 'chr' + key
             mod[new_key] = chrom_dict[key]
-        chrom_dict = mod_dict
+        chrom_dict = mod
     return chrom_dict
 
 
