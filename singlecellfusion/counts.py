@@ -64,6 +64,7 @@ def normalize_counts(loom_file,
                      method,
                      in_layer,
                      out_layer,
+                     row_attr=None,
                      col_attr=None,
                      length_attr=None,
                      batch_size=512,
@@ -79,6 +80,7 @@ def normalize_counts(loom_file,
             tpm: Normalize per TPM method
         in_layer (str): Name of input layer containing unnormalized counts
         out_layer (str): Name of output layer containing normalized counts
+        row_attr (str): Attribute specifying rows to include
         col_attr (str): Attribute specifying columns to include
         length_attr (str): Attribute specifying length of each feature in bases
             Must be provided if method == rpkm or method == tpm
@@ -99,6 +101,12 @@ def normalize_counts(loom_file,
                                         columns=True,
                                         as_bool=True,
                                         inverse=False)
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=row_attr,
+                                        columns=False,
+                                        as_bool=True,
+                                        inverse=False)
+
     with loompy.connect(loom_file) as ds:
         if length_attr:
             lengths = ds.ra[length_attr] / 1000  # ASSUMPTION: length in bases
@@ -111,7 +119,7 @@ def normalize_counts(loom_file,
                                             items=col_idx,
                                             layers=layers,
                                             batch_size=batch_size):
-            dat = sparse.csc_matrix(view.layer[in_layer][:, :])
+            dat = sparse.csc_matrix(view.layer[in_layer][row_idx, :])
             if method.lower() == 'rpkm' or method.lower() == 'fpkm':
                 scaling = (dat.sum(axis=0) / 1e6).A.ravel()
                 scaling = np.divide(1,
