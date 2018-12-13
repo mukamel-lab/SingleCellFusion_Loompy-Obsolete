@@ -188,6 +188,7 @@ def expand_sparse(mtx,
     Warning:
         Do not use on transposed matrices
     """
+    mtx = mtx.tocoo()
     if col_index is None and row_index is None:
         pass
     elif col_index is not None and col_N is None:

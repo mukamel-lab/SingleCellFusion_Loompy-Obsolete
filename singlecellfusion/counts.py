@@ -87,11 +87,6 @@ def normalize_counts(loom_file,
         batch_size (int): Size of each chunk
         verbose (bool): If true, print logging messages
 
-    Assumptions:
-        Does not need restriction by features
-    
-    To Do:
-        Restrict by cells
     """
     if verbose:
         t0 = time.time()
@@ -99,17 +94,17 @@ def normalize_counts(loom_file,
     col_idx = loom_utils.get_attr_index(loom_file=loom_file,
                                         attr=col_attr,
                                         columns=True,
-                                        as_bool=True,
+                                        as_bool=False,
                                         inverse=False)
     row_idx = loom_utils.get_attr_index(loom_file=loom_file,
                                         attr=row_attr,
                                         columns=False,
-                                        as_bool=True,
+                                        as_bool=False,
                                         inverse=False)
 
     with loompy.connect(loom_file) as ds:
         if length_attr:
-            lengths = ds.ra[length_attr] / 1000  # ASSUMPTION: length in bases
+            lengths = ds.ra[length_attr][row_idx] / 1000  # ASSUMPTION: length in bases
         elif method.lower() == 'rpkm' or method.lower() == 'tpm':
             raise ValueError(
                 'Cannot calculate {} without feature lengths'.format(method))
@@ -145,6 +140,9 @@ def normalize_counts(loom_file,
                 normalized = dat.dot(sparse.diags(scaling))
             else:
                 raise ValueError('{} is not supported'.format(method))
+            normalized = general_utils.expand_sparse(mtx=normalized,
+                                                     row_index=row_idx,
+                                                     row_N=ds.shape[0])
             ds.layers[out_layer][:, selection] = normalized.toarray()
     if verbose:
         t1 = time.time()
