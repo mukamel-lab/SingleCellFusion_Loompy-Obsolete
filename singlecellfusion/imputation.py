@@ -1170,6 +1170,7 @@ def auto_find_mutual_k(loom_file,
         k = general_utils.round_unit(x=k,
                                      units=10,
                                      method='nearest')
+        k = np.min([200,k])
         if verbose:
             imp_log.info('{0} mutual k: {1}'.format(loom_file,
                                                     k))
@@ -1188,10 +1189,11 @@ def auto_find_rescue_k(loom_file,
         k (int): Optimum k for rescue
     """
     with loompy.connect(loom_file) as ds:
-        k = np.ceil(0.002 * ds.shape[1])
+        k = np.ceil(0.001 * ds.shape[1])
         k = general_utils.round_unit(x=k,
                                      units=10,
                                      method='nearest')
+        k = np.min([50,k])
     if verbose:
         imp_log.info('{0} rescue k: {1}'.format(loom_file,
                                                 k))
@@ -1393,8 +1395,8 @@ def impute_between_datasets(loom_x,
                             rescue_metric='euclidean',
                             mutual_k_x_to_y='auto',
                             mutual_k_y_to_x='auto',
-                            rescue_k_x='auto',
-                            rescue_k_y='auto',
+                            rescue_k_x=10,
+                            rescue_k_y=10,
                             ka_x=5,
                             ka_y=5,
                             epsilon_x=1,
