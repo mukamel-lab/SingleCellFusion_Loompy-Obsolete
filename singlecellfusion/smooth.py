@@ -23,6 +23,7 @@ from scipy import sparse
 import time
 import logging
 import loompy
+import gc
 from . import loom_utils
 from . import general_utils
 from . import graphs
@@ -135,7 +136,11 @@ def perform_smoothing(loom_file,
         c = ds.layers[
             in_layer].sparse().T.tocsr()  # Transpose so smoothing on cells
         s = w.dot(c).T
-        ds.layers[out_layer] = s.tocoo()
+        del w
+        del c
+        gc.collect()
+        s = s.tocsr()
+        ds.layers[out_layer] = s
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
