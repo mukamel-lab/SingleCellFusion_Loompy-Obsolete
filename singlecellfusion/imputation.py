@@ -85,33 +85,31 @@ def get_n_variable_features(loom_file,
         t0 = time.time()
     # Determine variability
     with loompy.connect(filename=loom_file) as ds:
-        var_df = pd.DataFrame({'var': np.zeros((ds.shape[0],), dtype=int),
-                               'idx': np.zeros((ds.shape[0],), dtype=int)},
-                              index=ds.ra[id_attr])
+        tmp_var = pd.Series(np.zeros((ds.shape[0],), dtype=float),
+                            index = ds.ra[id_attr])
         for (_, selection, view) in ds.scan(items=row_idx,
                                             axis=0,
                                             layers=layers,
                                             batch_size=batch_size):
             dat = view.layers[layer][:, col_idx]
             if measure.lower() == 'sd' or measure.lower() == 'std':
-                var_df['var'].iloc[selection] = np.std(dat, axis=1)
+                tmp_var.iloc[selection] = np.std(dat, axis=1)
             elif measure.lower() == 'vmr':
-                var_df['var'].iloc[selection] = np.var(dat, axis=1) / np.mean(
-                    dat, axis=1)
+                tmp_var.iloc[selection] = np.var(dat, axis=1) / np.mean(dat, axis=1)
             elif measure.lower() == 'cv':
-                var_df['var'].iloc[selection] = np.std(dat, axis=1) / np.mean(
-                    dat, axis=1)
+                tmp_var.iloc[selection] = np.std(dat, axis=1) / np.mean(dat, axis=1)
             else:
                 raise ValueError(
                     'Unsupported measure value ({})'.format(measure))
         # Get top n variable features
-        n_feat = min(n_feat, var_df.shape[0])
-        hvf = var_df['var'].sort_values(ascending=False).head(
-            n_feat).index.values
-        var_df.loc[hvf, 'idx'] = 1
+        n_feat = min(n_feat, tmp_var.shape[0])
+        hvf = tmp_var.sort_values(ascending=False).head(n_feat).index.values
+        tmp_idx = pd.Series(np.zeros((ds.shape[0])),
+                            index = ds.ra[id_attr])
+        tmp_idx.loc[hvf] = 1
         if out_attr is None:
             out_attr = 'hvf_{}'.format(n_feat)
-        ds.ra[out_attr] = var_df['idx'].values.astype(int)
+        ds.ra[out_attr] = tmp_idx.values.astype(int)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
@@ -184,8 +182,8 @@ def find_common_features(loom_x,
                          out_attr,
                          feature_id_x='Accession',
                          feature_id_y='Accession',
-                         valid_ca_x=None,
-                         valid_ca_y=None,
+                         valid_ra_x=None,
+                         valid_ra_y=None,
                          remove_version=False,
                          verbose=False):
     """
@@ -198,8 +196,8 @@ def find_common_features(loom_x,
             Will be a boolean array indicating IDs in feature_id_x/feature_id_y
         feature_id_x (str): Specifies attribute containing feature IDs
         feature_id_y (str): Specifies attribute containing feature IDs
-        valid_ca_x (str): Optional, attribute that specifies desired features
-        valid_ca_y (str): Optional, attribute that specifies desired features
+        valid_ra_x (str): Optional, attribute that specifies desired features
+        valid_ra_y (str): Optional, attribute that specifies desired features
         remove_version (bool): If true remove versioning
             Anything after the first period is dropped
             Useful for GENCODE gene IDs
@@ -210,11 +208,11 @@ def find_common_features(loom_x,
     # Get features
     feat_x = prep_for_common(loom_file=loom_x,
                              id_attr=feature_id_x,
-                             valid_attr=valid_ca_x,
+                             valid_attr=valid_ra_x,
                              remove_version=remove_version)
     feat_y = prep_for_common(loom_file=loom_y,
                              id_attr=feature_id_y,
-                             valid_attr=valid_ca_y,
+                             valid_attr=valid_ra_y,
                              remove_version=remove_version)
     # Find common features
     feats = [feat_x, feat_y]
@@ -1344,8 +1342,8 @@ def prep_for_imputation(loom_x,
                              out_attr=common_attr,
                              feature_id_x=feature_id_x,
                              feature_id_y=feature_id_y,
-                             valid_ca_x=valid_ca_x,
-                             valid_ca_y=valid_ca_y,
+                             valid_ra_x=valid_ra_x,
+                             valid_ra_y=valid_ra_y,
                              remove_version=remove_id_version,
                              verbose=verbose)
     # Generate correlations
