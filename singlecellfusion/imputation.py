@@ -86,7 +86,7 @@ def get_n_variable_features(loom_file,
     # Determine variability
     with loompy.connect(filename=loom_file) as ds:
         tmp_var = pd.Series(np.zeros((ds.shape[0],), dtype=float),
-                            index = ds.ra[id_attr])
+                            index=ds.ra[id_attr])
         for (_, selection, view) in ds.scan(items=row_idx,
                                             axis=0,
                                             layers=layers,
@@ -95,9 +95,11 @@ def get_n_variable_features(loom_file,
             if measure.lower() == 'sd' or measure.lower() == 'std':
                 tmp_var.iloc[selection] = np.std(dat, axis=1)
             elif measure.lower() == 'vmr':
-                tmp_var.iloc[selection] = np.var(dat, axis=1) / np.mean(dat, axis=1)
+                tmp_var.iloc[selection] = np.var(dat, axis=1) / np.mean(dat,
+                                                                        axis=1)
             elif measure.lower() == 'cv':
-                tmp_var.iloc[selection] = np.std(dat, axis=1) / np.mean(dat, axis=1)
+                tmp_var.iloc[selection] = np.std(dat, axis=1) / np.mean(dat,
+                                                                        axis=1)
             else:
                 raise ValueError(
                     'Unsupported measure value ({})'.format(measure))
@@ -105,7 +107,7 @@ def get_n_variable_features(loom_file,
         n_feat = min(n_feat, tmp_var.shape[0])
         hvf = tmp_var.sort_values(ascending=False).head(n_feat).index.values
         tmp_idx = pd.Series(np.zeros((ds.shape[0])),
-                            index = ds.ra[id_attr])
+                            index=ds.ra[id_attr])
         tmp_idx.loc[hvf] = 1
         if out_attr is None:
             out_attr = 'hvf_{}'.format(n_feat)
@@ -233,8 +235,8 @@ def find_common_features(loom_x,
                         remove_version=True)
     if verbose:
         log_msg = ('Found {0} features in common ' +
-                   '({1}% of features in {2}, ' +
-                   '{3}% of features in {4})')
+                   '({1:.2f}% of features in {2}, ' +
+                   '{3:.2f}% of features in {4})')
         num_comm = common_feat.shape[0]
         imp_log.info(log_msg.format(num_comm,
                                     loom_utils.get_pct(loom_file=loom_x,
@@ -1159,6 +1161,7 @@ def auto_find_mutual_k(loom_file,
 
     Args:
         loom_file (str): Path to loom file
+        verbose (bool): Print logging messages
 
     Returns:
         k (int): Optimum k for mutual nearest neighbors
@@ -1168,7 +1171,7 @@ def auto_find_mutual_k(loom_file,
         k = general_utils.round_unit(x=k,
                                      units=10,
                                      method='nearest')
-        k = np.min([200,k])
+        k = np.min([200, k])
         if verbose:
             imp_log.info('{0} mutual k: {1}'.format(loom_file,
                                                     k))
@@ -1182,6 +1185,7 @@ def auto_find_rescue_k(loom_file,
 
     Args:
         loom_file (str): Path to loom file
+        verbose (bool): Print logging messages
 
     Returns:
         k (int): Optimum k for rescue
@@ -1191,7 +1195,7 @@ def auto_find_rescue_k(loom_file,
         k = general_utils.round_unit(x=k,
                                      units=10,
                                      method='nearest')
-        k = np.min([50,k])
+        k = np.min([50, k])
     if verbose:
         imp_log.info('{0} rescue k: {1}'.format(loom_file,
                                                 k))
