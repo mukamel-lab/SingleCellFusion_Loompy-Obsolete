@@ -117,6 +117,7 @@ def louvain_jaccard(loom_file,
                     pca_attr=None,
                     layer='',
                     n_comp=50,
+                    drop_first=False,
                     row_attr=None,
                     scale_attr=None,
                     gen_knn=False,
@@ -147,6 +148,10 @@ def louvain_jaccard(loom_file,
                 Defaults to PCA
         layer (str): Layer in loom file containing data for PCA
         n_comp (int): Number of components for PCA (if pca_attr not provided)
+        drop_first (bool): Drops first PC
+            Useful if the first PC correlates with a technical feature
+            If true, a total of n_comp is still generated and added to loom_file
+            If true, the first principal component will be lost
         row_attr (str): Attribute specifying features to include
             Only used if performing PCA 
         scale_attr (str): Optional, attribute specifying cell scaling factor
@@ -185,6 +190,7 @@ def louvain_jaccard(loom_file,
                                 row_attr=row_attr,
                                 scale_attr=scale_attr,
                                 n_comp=n_comp,
+                                drop_first=drop_first,
                                 batch_size=batch_size,
                                 verbose=verbose)
     # Generate kNN

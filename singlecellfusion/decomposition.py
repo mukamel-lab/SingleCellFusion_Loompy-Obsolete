@@ -53,6 +53,7 @@ def batch_pca(loom_file,
               row_attr=None,
               scale_attr=None,
               n_comp=50,
+              drop_first=False,
               batch_size=512,
               verbose=False):
     """
@@ -67,6 +68,10 @@ def batch_pca(loom_file,
         row_attr (str): Optional, only use features specified by row_attr
         scale_attr (str): Optional, attribute specifying cell scaling factor
         n_comp (int): Number of components for PCA
+        drop_first (bool): Drops first PC
+            Useful if the first PC correlates with a technical feature
+            If true, a total of n_comp is still generated and added to loom_file
+            If true, the first principal component will be lost
         batch_size (int): Number of elements per chunk
         verbose (bool): If true, print logging messages
     
@@ -77,7 +82,11 @@ def batch_pca(loom_file,
     if verbose:
         decomp_log.info('Fitting PCA')
         t_start = time.time()
-    pca = IncrementalPCA(n_components=n_comp)
+    if drop_first:
+        n_pca = n_comp + 1
+    else:
+        n_pca = n_comp
+    pca = IncrementalPCA(n_components=n_pca)
     with loompy.connect(loom_file) as ds:
         ds.ca[out_attr] = np.zeros((ds.shape[1], n_comp), dtype=float)
         n = ds.ca[out_attr].shape[0]
@@ -115,6 +124,8 @@ def batch_pca(loom_file,
                            row_idx=row_idx,
                            scale_attr=scale_attr)
             dat = pca.transform(dat)
+            if drop_first:
+                dat = dat[:,1:]
             mask = selection == np.arange(n)[:, None]
             ds.ca[out_attr] += mask.dot(dat)
         # Add to file
@@ -178,6 +189,7 @@ def batch_pca_contexts(loom_file,
                        row_attrs=None,
                        scale_attrs=None,
                        n_comp=50,
+                       drop_first=False,
                        batch_size=512,
                        verbose=False):
     """
@@ -193,6 +205,10 @@ def batch_pca_contexts(loom_file,
         row_attrs (list): List of attributes specifying rows to use
         scale_attrs (list): Attributes specifying per cell scaling factors
         n_comp (int): Number of components for PCA
+        drop_first (bool): Drops first PC
+            Useful if the first PC correlates with a technical feature
+            If true, a total of n_comp is still generated and added to loom_file
+            If true, the first principal component will be lost
         batch_size (int): Number of elements per chunk
         verbose (bool): If true, print logging messages
         
@@ -253,7 +269,11 @@ def batch_pca_contexts(loom_file,
                                                             verbose=verbose)
     # Perform PCA
     layers = loom_utils.make_layer_list(layers=layers)
-    pca = IncrementalPCA(n_components=n_comp)
+    if drop_first:
+        n_pca = n_comp + 1
+    else:
+        n_pca = n_comp
+    pca = IncrementalPCA(n_components=n_pca)
     with loompy.connect(loom_file) as ds:
         ds.ca[out_attr] = np.zeros((ds.shape[1], n_comp), dtype=float)
         n = ds.ca[out_attr].shape[0]
@@ -283,6 +303,8 @@ def batch_pca_contexts(loom_file,
                                             global_dict=global_dict,
                                             row_dict=row_idx)
             comb_layers = pca.transform(comb_layers)
+            if drop_first:
+                comb_layers = comb_layers[:,1:]
             mask = selection == np.arange(n)[:, None]
             ds.ca[out_attr] += mask.dot(comb_layers)
         # Log
@@ -302,6 +324,7 @@ def run_tsne(loom_file,
              row_attr=None,
              scale_attr=None,
              n_pca=50,
+             drop_first=False,
              layer='',
              perp=30,
              n_tsne=2,
@@ -328,6 +351,10 @@ def run_tsne(loom_file,
         layer (str): Layer in loom file containing data for PCA
         scale_attr (str): Optional, attribute specifying cell scaling factor
         n_pca (int): Number of components for PCA
+        drop_first (bool): Drops first PC
+            Useful if the first PC correlates with a technical feature
+            If true, a total of n_comp is still generated and added to loom_file
+            If true, the first principal component will be lost
         perp (int): Perplexity
         n_tsne (int): Number of components for tSNE
         n_proc (int): Number of processors to use for tSNE
@@ -356,6 +383,7 @@ def run_tsne(loom_file,
                       row_attr=row_attr,
                       scale_attr=scale_attr,
                       n_comp=n_pca,
+                      drop_first=drop_first,
                       batch_size=batch_size,
                       verbose=verbose)
         # Get components
@@ -416,6 +444,7 @@ def run_umap(loom_file,
              row_attr=None,
              scale_attr=None,
              n_pca=50,
+             drop_first=False,
              layer='',
              n_umap=2,
              min_dist=0.1,
@@ -441,6 +470,10 @@ def run_umap(loom_file,
         layer (str): Layer in loom file containing data for PCA
         scale_attr (str): Optional, attribute specifying cell scaling factor
         n_pca (int): Number of components for PCA
+        drop_first (bool): Drops first PC
+            Useful if the first PC correlates with a technical feature
+            If true, a total of n_comp is still generated and added to loom_file
+            If true, the first principal component will be lost
         layer (str): Layer in loom_file containing data
         n_umap (int): Number of reduced components for UMAP
         min_dist (float): Minimum distance (0-1) in UMAP space for two points
@@ -469,6 +502,7 @@ def run_umap(loom_file,
                       row_attr=row_attr,
                       scale_attr=scale_attr,
                       n_comp=n_pca,
+                      drop_first=drop_first,
                       batch_size=batch_size,
                       verbose=verbose)
         # Get components
