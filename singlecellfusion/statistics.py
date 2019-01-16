@@ -70,7 +70,7 @@ def batch_mean_and_std(loom_file,
         t0 = time.time()
     # Get indices
     layers = loom_utils.make_layer_list(layers=layer)
-    with loompy.connect(filename=loom_file,mode='r') as ds:
+    with loompy.connect(filename=loom_file, mode='r') as ds:
         for (_, selection, view) in ds.scan(axis=loom_axis,
                                             layers=layers,
                                             batch_size=batch_size):

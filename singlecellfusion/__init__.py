@@ -6,7 +6,7 @@ __all__ = ['clustering',
            'counts',
            'decomposition',
            'general_utils',
-           'graphs',
+           'neighbors',
            'imputation',
            'io',
            'loom_utils',
@@ -14,7 +14,16 @@ __all__ = ['clustering',
            'qc',
            'smooth',
            'snmcseq',
-           'statistics',
+           'statistics'
            ]
+# Set-up logger
+import logging
+log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+logging.basicConfig(level=logging.INFO,
+                    format=log_fmt,
+                    datefmt='%b-%d-%y  %H%M:%S')
+logger = logging.getLogger(__name__)
 
+# Import packages
 from singlecellfusion import *
+

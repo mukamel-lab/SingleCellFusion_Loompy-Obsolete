@@ -92,7 +92,10 @@ def add_dense(count_file,
                             **kwargs)
         dat = dat.T
     else:
-        raise ValueError('Unsupported feature_axis ({})'.format(feature_axis))
+        err_msg = 'Unsupported feature_axis ({})'.format(feature_axis)
+        if verbose:
+            io_log.error(err_msg)
+        raise ValueError(err_msg)
     # Prepare data for loom
     if feature_id is None:
         loom_feat = make_unique_ids(max_number=dat.shape[0])
@@ -247,10 +250,15 @@ def h5_to_loom(h5_file,
             for node in f.walk_nodes('/{}'.format(genome), 'Array'):
                 dsets[node.name] = node.read()
         except tables.NoSuchNodeError:
-            raise Exception(
-                'Genome {} does not exist in this file'.format(genome))
+            err_msg = 'Genome {} does not exist in this file'.format(genome)
+            if verbose:
+                io_log.error(err_msg)
+            raise Exception(err_msg)
         except KeyError:
-            raise ValueError('File is missing one or more required datasets')
+            err_msg = 'File is missing one or more required datasets'
+            if verbose:
+                io_log.error(err_msg)
+            raise ValueError(err_msg)
         if verbose:
             t_write = time.time()
             time_run, time_fmt = general_utils.format_run_time(t_search,

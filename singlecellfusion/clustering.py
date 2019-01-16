@@ -12,7 +12,7 @@ import numpy as np
 import time
 import logging
 import louvain
-from . import graphs
+from . import neighbors
 from . import loom_utils
 from . import general_utils
 from . import decomposition
@@ -21,14 +21,14 @@ from . import decomposition
 clust_log = logging.getLogger(__name__)
 
 
-def louvain_clustering(loom_file,
-                       graph_attr,
-                       clust_attr='ClusterID',
-                       cell_attr='CellID',
-                       valid_attr=None,
-                       directed=True,
-                       seed=23,
-                       verbose=False):
+def clustering_from_graph(loom_file,
+                          graph_attr,
+                          clust_attr='ClusterID',
+                          cell_attr='CellID',
+                          valid_attr=None,
+                          directed=True,
+                          seed=23,
+                          verbose=False):
     """
     Performs Louvain clustering on a given weighted adjacency matrix
     
@@ -56,13 +56,16 @@ def louvain_clustering(loom_file,
         adj_mtx = ds.col_graphs[graph_attr]
     adj_mtx = adj_mtx.tocsr()[col_idx, :][:, col_idx]
     if adj_mtx.shape[0] != adj_mtx.shape[1]:
-        raise ValueError('Adjacency matrix must be symmetrical!')
+        err_msg = 'Adjacency matrix must be symmetrical'
+        if verbose:
+            clust_log.error(err_msg)
+        raise ValueError(err_msg)
     # Generate graph
     if verbose:
         t0 = time.time()
         clust_log.info('Converting to igraph')
-    g = graphs.adjacency_to_igraph(adj_mtx=adj_mtx,
-                                   directed=directed)
+    g = neighbors.adjacency_to_igraph(adj_mtx=adj_mtx,
+                                      directed=directed)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
@@ -116,7 +119,7 @@ def louvain_jaccard(loom_file,
                     gen_pca=False,
                     pca_attr=None,
                     layer='',
-                    n_comp=50,
+                    n_pca=50,
                     drop_first=False,
                     row_attr=None,
                     scale_attr=None,
@@ -147,10 +150,10 @@ def louvain_jaccard(loom_file,
             If gen_pca, this is the name of the output attribute
                 Defaults to PCA
         layer (str): Layer in loom file containing data for PCA
-        n_comp (int): Number of components for PCA (if pca_attr not provided)
+        n_pca (int): Number of components for PCA (if pca_attr not provided)
         drop_first (bool): Drops first PC
             Useful if the first PC correlates with a technical feature
-            If true, a total of n_comp is still generated and added to loom_file
+            If true, a total of n_pca is still generated and added to loom_file
             If true, the first principal component will be lost
         row_attr (str): Attribute specifying features to include
             Only used if performing PCA 
@@ -189,7 +192,7 @@ def louvain_jaccard(loom_file,
                                 col_attr=valid_attr,
                                 row_attr=row_attr,
                                 scale_attr=scale_attr,
-                                n_comp=n_comp,
+                                n_pca=n_pca,
                                 drop_first=drop_first,
                                 batch_size=batch_size,
                                 verbose=verbose)
@@ -199,40 +202,40 @@ def louvain_jaccard(loom_file,
             neighbor_attr = 'k{}_neighbors'.format(k)
         if distance_attr is None:
             distance_attr = 'k{}_distances'.format(k)
-        graphs.generate_knn(loom_file=loom_file,
-                            dat_attr=pca_attr,
-                            valid_attr=valid_attr,
-                            neighbor_attr=neighbor_attr,
-                            distance_attr=distance_attr,
-                            k=k,
-                            num_trees=num_trees,
-                            metric=metric,
-                            batch_size=batch_size,
-                            verbose=verbose)
+        neighbors.generate_knn(loom_file=loom_file,
+                               dat_attr=pca_attr,
+                               valid_attr=valid_attr,
+                               neighbor_attr=neighbor_attr,
+                               distance_attr=distance_attr,
+                               k=k,
+                               num_trees=num_trees,
+                               metric=metric,
+                               batch_size=batch_size,
+                               verbose=verbose)
 
     # Generate Jaccard-weighted adjacency
     if gen_jaccard:
         if jaccard_graph is None:
             jaccard_graph = 'Jaccard'
-        graphs.loom_adjacency(loom_file=loom_file,
-                              neighbor_attr=neighbor_attr,
-                              graph_attr=jaccard_graph,
-                              weight=True,
-                              normalize=False,
-                              normalize_axis=None,
-                              offset=None,
-                              valid_attr=valid_attr,
-                              batch_size=batch_size)
+        neighbors.loom_adjacency(loom_file=loom_file,
+                                 neighbor_attr=neighbor_attr,
+                                 graph_attr=jaccard_graph,
+                                 weight=True,
+                                 normalize=False,
+                                 normalize_axis=None,
+                                 offset=None,
+                                 valid_attr=valid_attr,
+                                 batch_size=batch_size)
     if clust_attr is None:
         clust_attr = 'ClusterID'
-    louvain_clustering(loom_file=loom_file,
-                       graph_attr=jaccard_graph,
-                       clust_attr=clust_attr,
-                       cell_attr=cell_attr,
-                       valid_attr=valid_attr,
-                       directed=True,
-                       seed=seed,
-                       verbose=verbose)
+    clustering_from_graph(loom_file=loom_file,
+                          graph_attr=jaccard_graph,
+                          clust_attr=clust_attr,
+                          cell_attr=cell_attr,
+                          valid_attr=valid_attr,
+                          directed=True,
+                          seed=seed,
+                          verbose=verbose)
 
 
 def cluster_and_reduce(loom_file,
@@ -274,7 +277,7 @@ def cluster_and_reduce(loom_file,
         clust_attr (str): Name for output attribute containing clusters
         reduce_attr (str): Basename of output attributes for reduced data
             Follows format of {reduced_attr}_{x,y,z}
-        n_reduce (int): Number of components following reduction by reduce_method
+        n_reduce (int): Number of components after reduce_method
         cell_attr (str): Name of attribute containing unique cell IDs
         gen_pca (bool): Perform PCA before clustering and later reduction
         pca_attr (str): Name of column attribute containing PCs
@@ -289,7 +292,7 @@ def cluster_and_reduce(loom_file,
         num_trees (int): Number of trees for approximate kNN
         knn_metric (str): Metric for kNN (from annoy documentation)
         gen_jaccard (bool): Generate Jaccard-weighted adjacency matrix
-        jaccard_graph (str): Name of col_graph containing Jaccard-weighted matrix
+        jaccard_graph (str): col_graph containing Jaccard-weighted matrix
         tsne_perp (int): Perplexity of tSNE (if reduce_method is tsne)
         tsne_iter (int): Number of iterations for tSNE
         umap_dist (float): 0-1 distance for uMAP (if reduce_method is umap)
@@ -304,12 +307,16 @@ def cluster_and_reduce(loom_file,
     """
     # Check inputs
     if n_reduce > 3:
-        clust_log.error('Maximum of three dimensions allowed')
-        raise ValueError
+        err_msg = 'Maximum of three dimensions'
+        if verbose:
+            clust_log.error(err_msg)
+        raise ValueError(err_msg)
     if reduce_method.lower() == 'pca':
         if n_reduce == 0:
-            clust_log.error('n_reduce must be greater than 0')
-            raise ValueError
+            err_msg = 'n_reduce must be greather than 0'
+            if verbose:
+                clust_log.error(err_msg)
+            raise ValueError(err_msg)
         elif n_reduce <= n_pca:
             pass
         else:
@@ -318,15 +325,17 @@ def cluster_and_reduce(loom_file,
             pass
         elif reduce_attr is None:
             reduce_attr = pca_attr
-        else:
+        elif verbose:
             clust_log.warning('reduce_attr, pca_attr mismatch. Duplicating')
     elif reduce_method.lower() in ['tsne', 'umap']:
         pass
     elif reduce_method is None:
         pass
     else:
-        clust_log.error('reduce_method is invalid')
-        raise ValueError
+        err_msg = 'reduce_method is invalid'
+        if verbose:
+            clust_log.error(err_msg)
+        raise ValueError(err_msg)
     # Perform clustering
     louvain_jaccard(loom_file=loom_file,
                     clust_attr=clust_attr,
@@ -335,7 +344,7 @@ def cluster_and_reduce(loom_file,
                     gen_pca=gen_pca,
                     pca_attr=pca_attr,
                     layer=layer,
-                    n_comp=n_pca,
+                    n_pca=n_pca,
                     row_attr=valid_ra,
                     scale_attr=scale_attr,
                     gen_knn=gen_knn,
@@ -398,4 +407,7 @@ def cluster_and_reduce(loom_file,
     elif reduce_method is None:
         pass
     else:
-        raise ValueError('Error in preliminary if/else check')
+        err_msg = 'Error in preliminary if/else check'
+        if verbose:
+            clust_log.error(err_msg)
+        raise ValueError(err_msg)

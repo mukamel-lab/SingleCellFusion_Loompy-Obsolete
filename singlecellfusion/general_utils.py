@@ -71,6 +71,7 @@ def alphanum_key(item):
 
     """
     keys = []
+    item = str(item)
     for i in re.split('([0-9]+)', item):
         if i.isdigit():
             i = int(i)

@@ -26,7 +26,7 @@ import loompy
 import gc
 from . import loom_utils
 from . import general_utils
-from . import graphs
+from . import neighbors
 from . import decomposition
 from . import snmcseq
 from . import counts
@@ -80,7 +80,10 @@ def compute_markov(loom_file,
             distances = distances[:, 1:]
             indices = indices[:, 1:]
         elif distances.shape[1] != k - 1:
-            raise ValueError('Size of kNN is unexpected')
+            err_msg = 'Size of kNN is unexpected'
+            if verbose:
+                smooth_log.error(err_msg)
+            raise ValueError(err_msg)
         # Normalize by ka's distance
         if ka > 0:
             distances = distances / (np.sort(distances,
@@ -152,7 +155,7 @@ def smooth_counts(loom_file,
                   gen_pca=False,
                   pca_attr=None,
                   pca_layer='',
-                  n_comp=50,
+                  n_pca=50,
                   drop_first=False,
                   row_attr=None,
                   scale_attr=None,
@@ -182,10 +185,10 @@ def smooth_counts(loom_file,
             If gen_pca, this is the name of the output attribute
                 Defaults to PCA
         pca_layer (str): Layer in loom file containing data for PCA
-        n_comp (int): Number of components for PCA (if pca_attr not provided)
+        n_pca (int): Number of components for PCA (if pca_attr not provided)
         drop_first (bool): Drops first PC
             Useful if the first PC correlates with a technical feature
-            If true, a total of n_comp is still generated and added to loom_file
+            If true, a total of n_pca is still generated and added to loom_file
             If true, the first principal component will be lost
         row_attr (str): Attribute specifying features to include
             Only used if performing PCA 
@@ -228,7 +231,7 @@ def smooth_counts(loom_file,
                                 col_attr=valid_attr,
                                 row_attr=row_attr,
                                 scale_attr=scale_attr,
-                                n_comp=n_comp,
+                                n_pca=n_pca,
                                 drop_first=drop_first,
                                 batch_size=batch_size,
                                 verbose=verbose)
@@ -238,16 +241,16 @@ def smooth_counts(loom_file,
             neighbor_attr = 'k{}_neighbors'.format(k)
         if distance_attr is None:
             distance_attr = 'k{}_distances'.format(k)
-        graphs.generate_knn(loom_file=loom_file,
-                            dat_attr=pca_attr,
-                            valid_attr=valid_attr,
-                            neighbor_attr=neighbor_attr,
-                            distance_attr=distance_attr,
-                            k=k,
-                            num_trees=num_trees,
-                            metric=metric,
-                            batch_size=batch_size,
-                            verbose=verbose)
+        neighbors.generate_knn(loom_file=loom_file,
+                               dat_attr=pca_attr,
+                               valid_attr=valid_attr,
+                               neighbor_attr=neighbor_attr,
+                               distance_attr=distance_attr,
+                               k=k,
+                               num_trees=num_trees,
+                               metric=metric,
+                               batch_size=batch_size,
+                               verbose=verbose)
 
     # Generate Markov matrix
     if gen_w:
@@ -324,7 +327,7 @@ def smooth_methylation(loom_file,
         n_pca (int): Number of principal components
         drop_first (bool): Drops first PC
             Useful if the first PC correlates with a technical feature
-            If true, a total of n_comp is still generated and added to loom_file
+            If true, a total of n_pca is still generated and added to loom_file
             If true, the first principal component will be los
         gen_knn (bool): Generate k-nearest neighbors graph
         neighbor_attr (str): Attribute containing neighbor indices
@@ -407,8 +410,10 @@ def smooth_methylation(loom_file,
         if not gen_obs_mcc:
             check_layers = check_layers + obs_mcc
     else:
-        smooth_log.error('Layers must be same type and length')
-        raise ValueError
+        err_msg = 'Layers must be same type and length'
+        if verbose:
+            smooth_log.error(err_msg)
+        raise ValueError(err_msg)
     loom_utils.check_for_values(loom_file=loom_file,
                                 values=check_layers,
                                 component='layers')
@@ -466,35 +471,35 @@ def smooth_methylation(loom_file,
                                          col_attrs=valid_ca,
                                          row_attrs=valid_features,
                                          scale_attrs=scale_attr,
-                                         n_comp=n_pca,
+                                         n_pca=n_pca,
                                          drop_first=drop_first,
                                          batch_size=batch_size,
                                          verbose=verbose)
     # Generate kNN
     if gen_knn:
-        graphs.generate_knn(loom_file=loom_file,
-                            dat_attr=pca_attr,
-                            valid_attr=valid_ca,
-                            neighbor_attr=neighbor_attr,
-                            distance_attr=distance_attr,
-                            k=k,
-                            num_trees=num_trees,
-                            metric=metric,
-                            batch_size=batch_size,
-                            verbose=verbose)
+        neighbors.generate_knn(loom_file=loom_file,
+                               dat_attr=pca_attr,
+                               valid_attr=valid_ca,
+                               neighbor_attr=neighbor_attr,
+                               distance_attr=distance_attr,
+                               k=k,
+                               num_trees=num_trees,
+                               metric=metric,
+                               batch_size=batch_size,
+                               verbose=verbose)
 
     # Generate Markov matrix
     if gen_w:
-        graphs.compute_markov(loom_file=loom_file,
-                              neighbor_attr=neighbor_attr,
-                              distance_attr=distance_attr,
-                              out_graph=w_graph,
-                              valid_attr=valid_ca,
-                              k=k,
-                              ka=ka,
-                              epsilon=epsilon,
-                              p=p,
-                              verbose=verbose)
+        neighbors.compute_markov(loom_file=loom_file,
+                                 neighbor_attr=neighbor_attr,
+                                 distance_attr=distance_attr,
+                                 out_graph=w_graph,
+                                 valid_attr=valid_ca,
+                                 k=k,
+                                 ka=ka,
+                                 epsilon=epsilon,
+                                 p=p,
+                                 verbose=verbose)
     for i in range(len(obs_mcc)):
         # Smooth data
         tmp_in = [obs_mc[i], obs_c[i]]
@@ -505,7 +510,7 @@ def smooth_methylation(loom_file,
                           gen_pca=False,
                           pca_attr=pca_attr,
                           pca_layer='',
-                          n_comp=n_pca,
+                          n_pca=n_pca,
                           row_attr=valid_features[i],
                           scale_attr=scale_attr[i],
                           gen_knn=False,
@@ -610,7 +615,7 @@ def smooth_rna(loom_file,
         n_pca (int): Number of principal components
         drop_first (bool): Drops first PC
             Useful if the first PC correlates with a technical feature
-            If true, a total of n_comp is still generated and added to loom_file
+            If true, a total of n_pca is still generated and added to loom_file
             If true, the first principal component will be lost
         gen_knn (bool): Generate k-nearest neighbors graph
         neighbor_attr (str): Attribute containing neighbor indices
@@ -648,8 +653,10 @@ def smooth_rna(loom_file,
     check_cols = []
     if length_attr is None:
         if norm_method == 'tpm' or norm_method == 'rpkm':
-            smooth_log.error('length_attr must be provided')
-            raise ValueError
+            err_msg = 'length_attr must be provided'
+            if verbose:
+                smooth_log.error(err_msg)
+            raise ValueError(err_msg)
     else:
         check_cols.append(length_attr)
     if not gen_pca:
@@ -715,42 +722,42 @@ def smooth_rna(loom_file,
                                 col_attr=valid_cells,
                                 row_attr=valid_features,
                                 scale_attr=None,
-                                n_comp=n_pca,
+                                n_pca=n_pca,
                                 drop_first=drop_first,
                                 batch_size=batch_size,
                                 verbose=verbose)
     # Generate kNN
     if gen_knn:
-        graphs.generate_knn(loom_file=loom_file,
-                            dat_attr=pca_attr,
-                            valid_attr=valid_cells,
-                            neighbor_attr=neighbor_attr,
-                            distance_attr=distance_attr,
-                            k=k,
-                            num_trees=num_trees,
-                            metric=metric,
-                            batch_size=batch_size,
-                            verbose=verbose)
+        neighbors.generate_knn(loom_file=loom_file,
+                               dat_attr=pca_attr,
+                               valid_attr=valid_cells,
+                               neighbor_attr=neighbor_attr,
+                               distance_attr=distance_attr,
+                               k=k,
+                               num_trees=num_trees,
+                               metric=metric,
+                               batch_size=batch_size,
+                               verbose=verbose)
 
     # Generate Markov matrix
     if gen_w:
-        graphs.compute_markov(loom_file=loom_file,
-                              neighbor_attr=neighbor_attr,
-                              distance_attr=distance_attr,
-                              out_graph=w_graph,
-                              valid_attr=valid_cells,
-                              k=k,
-                              ka=ka,
-                              epsilon=epsilon,
-                              p=p,
-                              verbose=verbose)
+        neighbors.compute_markov(loom_file=loom_file,
+                                 neighbor_attr=neighbor_attr,
+                                 distance_attr=distance_attr,
+                                 out_graph=w_graph,
+                                 valid_attr=valid_cells,
+                                 k=k,
+                                 ka=ka,
+                                 epsilon=epsilon,
+                                 p=p,
+                                 verbose=verbose)
     # Smooth data
     smooth_counts(loom_file=loom_file,
                   valid_attr=valid_cells,
                   gen_pca=False,
                   pca_attr=pca_attr,
                   pca_layer='',
-                  n_comp=n_pca,
+                  n_pca=n_pca,
                   row_attr=valid_features,
                   scale_attr=None,
                   gen_knn=False,

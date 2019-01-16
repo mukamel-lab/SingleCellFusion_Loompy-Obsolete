@@ -16,7 +16,7 @@ from . import general_utils
 from . import loom_utils
 
 # Start log
-logger = logging.getLogger(__name__)
+count_log = logging.getLogger(__name__)
 
 
 def add_feature_length(loom_file,
@@ -90,7 +90,7 @@ def normalize_counts(loom_file,
     """
     if verbose:
         t0 = time.time()
-        logger.info('Normalizing counts by {}'.format(method))
+        count_log.info('Normalizing counts by {}'.format(method))
     col_idx = loom_utils.get_attr_index(loom_file=loom_file,
                                         attr=col_attr,
                                         columns=True,
@@ -104,10 +104,14 @@ def normalize_counts(loom_file,
 
     with loompy.connect(loom_file) as ds:
         if length_attr:
-            lengths = ds.ra[length_attr][row_idx] / 1000  # ASSUMPTION: length in bases
+            # ASSUMPTION: length in bases
+            lengths = ds.ra[length_attr][row_idx] / 1000
         elif method.lower() == 'rpkm' or method.lower() == 'tpm':
-            raise ValueError(
-                'Cannot calculate {} without feature lengths'.format(method))
+            err_msg = 'Cannot calculate {} without feature lengths'.format(
+                method)
+            if verbose:
+                count_log.error(err_msg)
+            raise ValueError(err_msg)
         ds.layers[out_layer] = sparse.csc_matrix(ds.shape)
         layers = loom_utils.make_layer_list(layers=in_layer)
         for (_, selection, view) in ds.scan(axis=1,
@@ -139,7 +143,10 @@ def normalize_counts(loom_file,
                                     where=scaling != 0)
                 normalized = dat.dot(sparse.diags(scaling))
             else:
-                raise ValueError('{} is not supported'.format(method))
+                err_msg = '{} is not supported'.format(method)
+                if verbose:
+                    count_log.error(err_msg)
+                raise ValueError(err_msg)
             normalized = general_utils.expand_sparse(mtx=normalized,
                                                      row_index=row_idx,
                                                      row_N=ds.shape[0])
@@ -147,7 +154,7 @@ def normalize_counts(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info(
+        count_log.info(
             'Calculated {0} in {1:.2f} {2}'.format(method, time_run, time_fmt))
 
 
@@ -177,7 +184,7 @@ def log_transform_counts(loom_file,
     """
     if verbose:
         t0 = time.time()
-        logger.info('Log transforming ({}) counts'.format(log_type))
+        count_log.info('Log transforming ({}) counts'.format(log_type))
     with loompy.connect(loom_file) as ds:
         transformed = ds.layers[in_layer].sparse()
         if log_type == 'log10':
@@ -187,12 +194,15 @@ def log_transform_counts(loom_file,
         elif log_type == 'log':
             transformed.data = np.log(transformed.data + 1)
         else:
-            raise ValueError('Unsupported value of log_type')
+            err_msg = 'Unsupported log_type value'
+            if verbose:
+                count_log.error(err_msg)
+            raise ValueError(err_msg)
         ds.layers[out_layer] = transformed
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info('Transformed in {0:.2f} {1}'.format(time_run, time_fmt))
+        count_log.info('Transformed in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
 def find_putative_neurons(loom_file,
@@ -227,8 +237,11 @@ def find_putative_neurons(loom_file,
         genes = ds.ra[gene_attr]
         of_interest = genes == neuron_id
         if not np.any(of_interest):
-            raise ValueError('Could not find {0} in {1}'.format(neuron_id,
-                                                                gene_attr))
+            err_msg = 'Could not find {0} in {1}'.format(neuron_id,
+                                                         gene_attr)
+            if verbose:
+                count_log.error(err_msg)
+            raise ValueError(err_msg)
         counts = np.ravel(ds.layers[layer][of_interest, :][:, col_idx])
         clusters = ds.ca[clust_attr][col_idx]
         counts = pd.DataFrame({'counts': counts,
@@ -241,7 +254,7 @@ def find_putative_neurons(loom_file,
     if verbose:
         num_neuron = len(neurons)
         num_total = np.unique(clusters).shape[0]
-        logger.info(
+        count_log.info(
             'Identified {0}/{1} clusters to be neuronal'.format(num_neuron,
                                                                 num_total))
 
@@ -267,7 +280,7 @@ def calculate_10x_library(loom_file,
     """
     # Log
     if verbose:
-        logger.info('Determining median number of UMIs')
+        count_log.info('Determining median number of UMIs')
         t0 = time.time()
     # Get indices
     col_idx = loom_utils.get_attr_index(loom_file=loom_file,
@@ -293,8 +306,8 @@ def calculate_10x_library(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info('Obtained library sizes in {0:.2f} {1}'.format(time_run,
-                                                                   time_fmt))
+        count_log.info('Obtained library sizes in {0:.2f} {1}'.format(time_run,
+                                                                      time_fmt))
 
 
 def normalize_10x(loom_file,
@@ -323,7 +336,7 @@ def normalize_10x(loom_file,
     """
     # Start log
     if verbose:
-        logger.info('Normalizing 10X data')
+        count_log.info('Normalizing 10X data')
         t0 = time.time()
     # Get library sizes
     if gen_size:
@@ -364,5 +377,5 @@ def normalize_10x(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        logger.info('Normalized 10X in {0:.2f} {1}'.format(time_run,
-                                                           time_fmt))
+        count_log.info('Normalized 10X in {0:.2f} {1}'.format(time_run,
+                                                              time_fmt))

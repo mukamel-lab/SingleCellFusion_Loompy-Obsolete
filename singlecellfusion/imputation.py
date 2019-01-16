@@ -31,7 +31,7 @@ import logging
 import gc
 from . import general_utils
 from . import loom_utils
-from . import graphs
+from . import neighbors
 
 # Start log
 imp_log = logging.getLogger(__name__)
@@ -101,8 +101,10 @@ def get_n_variable_features(loom_file,
                 tmp_var.iloc[selection] = np.std(dat, axis=1) / np.mean(dat,
                                                                         axis=1)
             else:
-                raise ValueError(
-                    'Unsupported measure value ({})'.format(measure))
+                err_msg = 'Unsupported measure value ({})'.format(measure)
+                if verbose:
+                    imp_log.error(err_msg)
+                raise ValueError(err_msg)
         # Get top n variable features
         n_feat = min(n_feat, tmp_var.shape[0])
         hvf = tmp_var.sort_values(ascending=False).head(n_feat).index.values
@@ -220,8 +222,10 @@ def find_common_features(loom_x,
     feats = [feat_x, feat_y]
     common_feat = functools.reduce(np.intersect1d, feats)
     if common_feat.shape[0] == 0:
-        imp_log.error('Could not identify any common features')
-        raise RuntimeError
+        err_msg = 'Could not identify any common features'
+        if verbose:
+            imp_log.error(err_msg)
+        raise RuntimeError(err_msg)
     # Add indices
     add_common_features(loom_file=loom_x,
                         id_attr=feature_id_x,
@@ -268,7 +272,7 @@ def update_markov_values(coeff,
 
     Returns:
         dist_vals (ndarray): Updated distances for MNNs
-        idx_vals (ndarray): Updated distances for MNNs
+        idx_vals (ndarray): Updated indices for MNNs
     """
     if coeff.shape[1] < k:
         self_k = coeff.shape[1]
@@ -445,8 +449,10 @@ def generate_correlations(loom_x,
             elif direction == '-' or direction == 'negative':
                 dat_x = 1 - dat_x
             else:
-                raise ValueError(
-                    'Unsupported direction value ({})'.format(direction))
+                err_msg = 'Unsupported direction value ({})'.format(direction)
+                if verbose:
+                    imp_log.error(err_msg)
+                raise ValueError(err_msg)
             with loompy.connect(filename=loom_y, mode='r') as ds_y:
                 for (_, sel_y, dat_y) in ds_y.scan(axis=1,
                                                    items=col_y,
@@ -459,7 +465,10 @@ def generate_correlations(loom_x,
                     dat_y.columns = y_feat
                     dat_y = dat_y.loc[:, x_feat]
                     if dat_y.isnull().any().any():
-                        raise ValueError('Feature mismatch')
+                        err_msg = 'Feature mismatch for correlations'
+                        if verbose:
+                            imp_log.error(err_msg)
+                        raise ValueError(err_msg)
                     dat_y = dat_y.values
                     coeff = generate_coefficients(dat_x,
                                                   dat_y)
@@ -492,8 +501,8 @@ def generate_correlations(loom_x,
             'Generated correlations in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
-def multimodal_adjacency(distances,
-                         neighbors,
+def multimodal_adjacency(distance_arr,
+                         neighbor_arr,
                          num_col,
                          new_k=None):
     """
@@ -501,8 +510,8 @@ def multimodal_adjacency(distances,
     Optionally, restricts to a new k nearest neighbors
     
     Args:
-        distances (ndarray): Distances between elements
-        neighbors (ndarray): Index of neighbors
+        distance_arr (ndarray): Distances between elements
+        neighbor_arr (ndarray): Index of neighbors
         num_col (int): Number of output column in adjacency matrix
         new_k (int): Optional, restrict to this k
     
@@ -510,20 +519,20 @@ def multimodal_adjacency(distances,
         A (sparse matrix): Adjacency matrix
     """
     if new_k is None:
-        new_k = distances.shape[1]
-    if distances.shape[1] != neighbors.shape[1]:
+        new_k = distance_arr.shape[1]
+    if distance_arr.shape[1] != neighbor_arr.shape[1]:
         raise ValueError('Neighbors and distances must have same k!')
-    if distances.shape[1] < new_k:
+    if distance_arr.shape[1] < new_k:
         raise ValueError('new_k must be less than the current k')
-    tmp = pd.DataFrame(distances)
+    tmp = pd.DataFrame(distance_arr)
     new_k = int(new_k)
     knn = ((-tmp).rank(axis=1, method='first') <= new_k).values.astype(bool)
     if np.unique(np.sum(knn, axis=1)).shape[0] != 1:
         raise ValueError('k is inappropriate for data')
     a = sparse.csr_matrix(
-        (np.ones((int(neighbors.shape[0] * new_k),), dtype=int),
-         (np.where(knn)[0], neighbors[knn])),
-        (neighbors.shape[0], num_col))
+        (np.ones((int(neighbor_arr.shape[0] * new_k),), dtype=int),
+         (np.where(knn)[0], neighbor_arr[knn])),
+        (neighbor_arr.shape[0], num_col))
     return a
 
 
@@ -561,8 +570,8 @@ def gen_impute_adj(loom_file,
                                             layers=[''],
                                             items=self_idx,
                                             batch_size=batch_size):
-            adj.append(multimodal_adjacency(distances=view.ca[distance_attr],
-                                            neighbors=view.ca[neighbor_attr],
+            adj.append(multimodal_adjacency(distance_arr=view.ca[distance_attr],
+                                            neighbor_arr=view.ca[neighbor_attr],
                                             num_col=num_other,
                                             new_k=k))
     # Make matrices
@@ -638,9 +647,9 @@ def get_markov_impute(loom_target,
     # Generate mutual neighbors adjacency
     w_impute = (ax_xy.multiply(ax_yx.T))
     # Normalize
-    w_impute = graphs.normalize_adj(adj_mtx=w_impute,
-                                    axis=1,
-                                    offset=offset)
+    w_impute = neighbors.normalize_adj(adj_mtx=w_impute,
+                                       axis=1,
+                                       offset=offset)
     # Get cells
     c_x = len(np.sort(np.unique(w_impute.nonzero()[0])))
     if verbose:
@@ -709,8 +718,7 @@ def gaussian_markov(loom_target,
     elif metric == 'manhattan':
         from sklearn.metrics.pairwise import manhattan_distances as dist_func
     else:
-        imp_log.error('Invalid metric value')
-        raise ValueError
+        raise ValueError('Invalid metric value')
     # Get neighbors and distances
     cidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=valid_target,
@@ -729,8 +737,7 @@ def gaussian_markov(loom_target,
             tmp = dist_func(view.ca[pca_attr], mnn_pcs)
             knn = (pd.DataFrame(tmp).rank(axis=1, method='first') <= k)
             if np.unique(np.sum(knn, axis=1)).shape[0] != 1:
-                imp_log.error('k is inappropriate for data')
-                raise RuntimeError
+                raise ValueError('k is inappropriate for data')
             tmp_neighbor = np.reshape(mnns[np.where(knn)[1]],
                                       (selection.shape[0], k))
             tmp_distance = np.reshape(tmp[knn],
@@ -1090,8 +1097,10 @@ def loop_impute_data(loom_source,
     """
     if isinstance(layer_source, list) and isinstance(layer_target, list):
         if len(layer_source) != len(layer_target):
-            raise ValueError(
-                'layer_source and layer_target should have same length')
+            err_msg = 'layer_source and layer_target must have same length'
+            if verbose:
+                imp_log.error(err_msg)
+            raise ValueError(err_msg)
         for i in range(0, len(layer_source)):
             impute_data(loom_source=loom_source,
                         layer_source=layer_source[i],
@@ -1150,52 +1159,64 @@ def loop_impute_data(loom_source,
                     batch_source=batch_source,
                     verbose=verbose)
     else:
-        raise ValueError(
-            'layer_source and layer_target should be consistent shapes')
+        err_msg = 'layer_source and layer_target must be consistent shapes'
+        imp_log.error(err_msg)
+        raise ValueError(err_msg)
 
 
 def auto_find_mutual_k(loom_file,
+                       valid_attr=None,
                        verbose=False):
     """
     Automatically determines the optimum k for mutual nearest neighbors
 
     Args:
         loom_file (str): Path to loom file
+        valid_attr (str): Optional, attribute specifying cells to include
         verbose (bool): Print logging messages
 
     Returns:
         k (int): Optimum k for mutual nearest neighbors
     """
-    with loompy.connect(loom_file) as ds:
-        k = np.ceil(0.01 * ds.shape[1])
-        k = general_utils.round_unit(x=k,
-                                     units=10,
-                                     method='nearest')
-        k = np.min([200, k])
-        if verbose:
-            imp_log.info('{0} mutual k: {1}'.format(loom_file,
-                                                    k))
-        return k
+    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                          attr=valid_attr,
+                                          columns=True,
+                                          as_bool=True,
+                                          inverse=False)
+    k = np.ceil(0.01 * np.sum(valid_idx))
+    k = general_utils.round_unit(x=k,
+                                 units=10,
+                                 method='nearest')
+    k = np.min([200, k])
+    if verbose:
+        imp_log.info('{0} mutual k: {1}'.format(loom_file, k))
+    return k
 
 
 def auto_find_rescue_k(loom_file,
+                       valid_attr,
                        verbose=False):
     """
     Automatically determines the optimum k for rescuing non-MNNs
 
     Args:
         loom_file (str): Path to loom file
+        valid_attr (str): Optional, attribute specifying cells to include
         verbose (bool): Print logging messages
 
     Returns:
         k (int): Optimum k for rescue
     """
-    with loompy.connect(loom_file) as ds:
-        k = np.ceil(0.001 * ds.shape[1])
-        k = general_utils.round_unit(x=k,
-                                     units=10,
-                                     method='nearest')
-        k = np.min([50, k])
+    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                          attr=valid_attr,
+                                          columns=True,
+                                          as_bool=True,
+                                          inverse=False)
+    k = np.ceil(0.001 * np.sum(valid_idx))
+    k = general_utils.round_unit(x=k,
+                                 units=10,
+                                 method='nearest')
+    k = np.min([50, k])
     if verbose:
         imp_log.info('{0} rescue k: {1}'.format(loom_file,
                                                 k))
@@ -1311,9 +1332,11 @@ def prep_for_imputation(loom_x,
     # Get values for k
     if mutual_k_x_to_y == 'auto':
         mutual_k_x_to_y = auto_find_mutual_k(loom_file=loom_y,
+                                             valid_attr=valid_ca_y,
                                              verbose=verbose)
     if mutual_k_y_to_x == 'auto':
         mutual_k_y_to_x = auto_find_mutual_k(loom_file=loom_x,
+                                             valid_attr=valid_ca_x,
                                              verbose=verbose)
     max_k = np.max([mutual_k_x_to_y, mutual_k_y_to_x])
     # Find highly variable features
@@ -1346,8 +1369,8 @@ def prep_for_imputation(loom_x,
                              out_attr=common_attr,
                              feature_id_x=feature_id_x,
                              feature_id_y=feature_id_y,
-                             valid_ra_x=valid_ra_x,
-                             valid_ra_y=valid_ra_y,
+                             valid_ra_x=var_attr_x,
+                             valid_ra_y=var_attr_y,
                              remove_version=remove_id_version,
                              verbose=verbose)
     # Generate correlations
@@ -1467,24 +1490,30 @@ def impute_between_datasets(loom_x,
     # Handle inputs
     if mutual_k_x_to_y == 'auto':
         mutual_k_x_to_y = auto_find_mutual_k(loom_file=loom_y,
+                                             valid_attr=valid_ca_y,
                                              verbose=verbose)
     if mutual_k_y_to_x == 'auto':
         mutual_k_y_to_x = auto_find_mutual_k(loom_file=loom_x,
+                                             valid_attr=valid_ca_x,
                                              verbose=verbose)
     if rescue:
         if rescue_k_x == 'auto':
             rescue_k_x = auto_find_rescue_k(loom_file=loom_x,
+                                            valid_attr=valid_ca_x,
                                             verbose=verbose)
         if rescue_k_y == 'auto':
             rescue_k_y = auto_find_rescue_k(loom_file=loom_y,
+                                            valid_attr=valid_ca_y,
                                             verbose=verbose)
         ka_x = check_ka(k=rescue_k_x,
                         ka=ka_x)
         ka_y = check_ka(k=rescue_k_y,
                         ka=ka_y)
         if pca_attr_x is None or pca_attr_y is None:
-            imp_log.error('Missing pca_attr for rescue')
-            raise ValueError
+            err_msg = 'Missing pca_attr for rescue'
+            if verbose:
+                imp_log.error(err_msg)
+            raise ValueError(err_msg)
     # Impute data for loom_x
     loop_impute_data(loom_source=loom_y,
                      layer_source=observed_y,

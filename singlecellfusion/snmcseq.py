@@ -54,12 +54,15 @@ def calculate_mcc(loom_file,
         mc_log.info('Calculating mC/C')
         t0 = time.time()
     layers = loom_utils.make_layer_list(layers=[mc_layer, c_layer])
-    with loompy.connect(filename=loom_file,mode='r') as ds:
+    with loompy.connect(filename=loom_file, mode='r') as ds:
         for layer in layers:
             if layer in ds.layers.keys():
                 pass
             else:
-                raise ValueError('Could not find layer {}'.format(layer))
+                err_msg = 'Could not find layer {}'.format(layer)
+                if verbose:
+                    mc_log.error(err_msg)
+                raise ValueError(err_msg)
     col_idx = loom_utils.get_attr_index(loom_file=loom_file,
                                         attr=col_attr,
                                         columns=True,
@@ -74,7 +77,7 @@ def calculate_mcc(loom_file,
         old_mean = None
         old_obs = None
         first_iter = True
-        with loompy.connect(filename=loom_file,mode='r') as ds:
+        with loompy.connect(filename=loom_file, mode='r') as ds:
             for (_, selection, view) in ds.scan(axis=1,
                                                 layers=layers,
                                                 items=col_idx,
@@ -99,7 +102,10 @@ def calculate_mcc(loom_file,
         means = old_mean
         means[row_idx] = 0
         if np.max(means) > 1.0:
-            raise ValueError('mC/C is greater than 1!')
+            err_msg = 'mC/C is greater than 1'
+            if verbose:
+                mc_log.error(err_msg)
+            raise ValueError(err_msg)
     with loompy.connect(filename=loom_file) as ds:
         ds.layers[out_layer] = sparse.coo_matrix(ds.shape, dtype=float)
         valid_layer = 'Valid_{}'.format(out_layer)

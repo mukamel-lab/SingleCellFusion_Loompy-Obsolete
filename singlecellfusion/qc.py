@@ -157,8 +157,8 @@ def label_covered_cells(loom_file,
 
 def label_cells_and_features(loom_file,
                              layer,
-                             out_ca = 'Valid_QC',
-                             out_ra = 'Valid_QC',
+                             out_ca='Valid_QC',
+                             out_ra='Valid_QC',
                              min_cell=1,
                              min_feature=1,
                              fraction_cell=0.05,
@@ -206,4 +206,3 @@ def label_cells_and_features(loom_file,
                            row_attr=valid_ra,
                            batch_size=batch_size,
                            verbose=verbose)
-

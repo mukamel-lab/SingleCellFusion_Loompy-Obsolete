@@ -44,23 +44,20 @@ def check_for_values(loom_file,
         elif component == 'row_graphs':
             options = ds.row_graphs.keys()
         else:
-            lu_log.error('Invalid component value')
-            raise ValueError
+            raise ValueError('Invalid component value')
         if isinstance(values, str):
             if values is None:
                 pass
             elif values not in options:
-                lu_log.error('{0} is not in {1}'.format(values,
-                                                        component))
-                raise ValueError
+                raise ValueError('{0} is not in {1}'.format(values,
+                                                            component))
         elif isinstance(values, list):
             for value in values:
                 if value is None:
                     pass
                 elif value not in options:
-                    lu_log.error('{0} is not in {1}'.format(value,
-                                                            component))
-                    raise KeyError
+                    raise KeyError('{0} is not in {1}'.format(value,
+                                                              component))
 
 
 def get_attr_index(loom_file,
@@ -225,5 +222,5 @@ def transfer_attributes(loom_source,
                             else:
                                 lu_log.warning('{} not in file'.format(attr))
                         else:
-                            raise ValueError(
+                            raise KeyError(
                                 'Unsupported attribute {}'.format(key))
