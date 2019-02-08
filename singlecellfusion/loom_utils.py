@@ -10,6 +10,7 @@ import loompy
 import numpy as np
 import pandas as pd
 import logging
+import warnings
 
 # Start log
 lu_log = logging.getLogger(__name__)
@@ -224,3 +225,46 @@ def transfer_attributes(loom_source,
                         else:
                             raise KeyError(
                                 'Unsupported attribute {}'.format(key))
+
+
+def list_loom_matching(loom_file,
+                       to_match,
+                       loom_obj,
+                       just_print=False):
+    """
+    Returns or prints a list of matching values in a loom_file
+
+    Args:
+        loom_file (str): Path to loom file
+        to_match (str): String in loom_obj to search for
+        loom_obj (str): Name of loom object to search for to_match in
+            col_attr or ca
+            row_attr or ra
+            layers
+            col_graphs
+            row_graphs
+        just_print (bool): Print list instead of returning it
+    """
+    with loompy.connect(loom_file, mode='r') as ds:
+        if 'ca' in loom_obj or 'col_attr' in loom_obj:
+            opts = ds.ca.keys()
+        elif 'ra' in loom_obj or 'row_attr' in loom_obj:
+            opts = ds.ra.keys()
+        elif 'layer' in loom_obj:
+            opts = ds.layers.keys()
+        elif 'col_graph' in loom_obj:
+            opts = ds.col_graphs.keys()
+        elif 'row_graph' in loom_obj:
+            opts = ds.row_graphs.keys()
+        else:
+            raise ValueError('Unsupported value for loom_obj')
+    opts = pd.Series(opts)
+    restricted = opts.loc[opts.str.lower().str.contains(to_match.lower())]
+    restricted = restricted.tolist()
+    if len(restricted) == 0:
+        warnings.warn('No match found')
+    else:
+        if just_print:
+            print('%s' % '\n'.join(map(str, restricted)))
+        else:
+            return restricted

@@ -13,7 +13,6 @@ import pandas as pd
 from scipy import sparse
 import logging
 import tables
-import re
 import time
 from . import general_utils
 
@@ -140,7 +139,8 @@ def batch_add_sparse(loom_file,
                      col_attrs,
                      append=False,
                      empty_base=False,
-                     batch_size=512):
+                     batch_size=512,
+                     verbose=False):
     """
     Batch adds sparse matrices to a loom file
     
@@ -153,8 +153,12 @@ def batch_add_sparse(loom_file,
         append (bool): If true, append new cells. If false, overwrite file
         empty_base (bool): If true, add an empty array to the base layer
         batch_size (int): Size of batches of cells to add
+        verbose (bool): Print logging messages
     """
     # Check layers
+    if verbose:
+        t0 = time.time()
+        io_log.info('Adding data to loom_file {}'.format(loom_file))
     feats = set([])
     obs = set([])
     for key in layers:
@@ -191,98 +195,76 @@ def batch_add_sparse(loom_file,
                           row_attrs=row_attrs,
                           col_attrs=batch_col)
             append = True
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        io_log.info('Wrote loom file in {0:.2f} {1}'.format(time_run,time_fmt))
 
 
-def find_10x_genome(filename):
-    """
-    Finds the name of the genome in a 10x Hd5 file
-    
-    Args:
-        filename (str): Path to Hd5 10x count file
-    
-    Returns:
-        genome (str): Name of genome identifier in 10x file
-    """
-    p = r'/(.*)/'
-    genomes = set()
-    with tables.open_file(filename, 'r') as f:
-        for node in f.walk_nodes():
-            s = str(node)
-            match = re.search(p, s)
-            if match:
-                genomes.add(match.group(1))
-    if len(genomes) == 1:
-        return list(genomes)[0]
-    else:
-        raise ValueError('Too many genome options')
-
-
-def h5_to_loom(h5_file,
-               loom_file,
-               genome=None,
-               batch_size=512,
-               verbose=False):
+def cellranger_bc_h5_to_loom(h5_file,
+        loom_file,
+        barcode_prefix=None,
+        append=False,
+        batch_size=512,
+        verbose=False):
     """
     Converts a 10x formatted H5 file into the loom format
-    
+
     Args:
         h5_file (str): Name of input 10X h5 file
         loom_file (str): Name of output loom file
-        genome (str): Name of genome in h5 file
-            If None, automatically detects
+        barcode_prefix (str): Optional prefix for barcodes
+            Added in format of {barcode_prefix}_{barcode}
+        append (bool): If true, add h5_file to loom_file
+            If false, generates new file
         batch_size (int): Size of chunks
         verbose (bool): If true, prints logging messages
-    
+
     Modified from code written by 10x Genomics:
-        http://cf.10xgenomics.com/supp/cell-exp/megacell_tutorial-1.0.1.html
+        https://support.10xgenomics.com/single-cell-gene-expression/...
+        software/pipelines/latest/advanced/h5_matrices
     """
-    if genome is None:
-        genome = find_10x_genome(filename=h5_file)
-        if verbose:
-            io_log.info('The 10x genome is {}'.format(genome))
-    # Get relevant information from file
+    # Set defaults
+    row_attrs = dict()
+    col_attrs = dict()
+    layers = dict()
     if verbose:
-        io_log.info('Finding 10x data in h5 file {}'.format(h5_file))
-        t_search = time.time()
+        io_log.info('Parsing {}'.format(h5_file))
+    # Get data
     with tables.open_file(h5_file, 'r') as f:
-        try:
-            dsets = {}
-            for node in f.walk_nodes('/{}'.format(genome), 'Array'):
-                dsets[node.name] = node.read()
-        except tables.NoSuchNodeError:
-            err_msg = 'Genome {} does not exist in this file'.format(genome)
-            if verbose:
-                io_log.error(err_msg)
-            raise Exception(err_msg)
-        except KeyError:
-            err_msg = 'File is missing one or more required datasets'
-            if verbose:
-                io_log.error(err_msg)
-            raise ValueError(err_msg)
-        if verbose:
-            t_write = time.time()
-            time_run, time_fmt = general_utils.format_run_time(t_search,
-                                                               t_write)
-            io_log.info('Found data in {0:.2f} {1}'.format(time_run, time_fmt))
-            io_log.info('Adding data to loom_file {}'.format(loom_file))
-        matrix = sparse.csc_matrix((dsets['data'],
-                                    dsets['indices'],
-                                    dsets['indptr']),
-                                   shape=dsets['shape'])
-        row_attrs = {'Name': dsets['gene_names'].astype(str),
-                     'Accession': dsets['gene'].astype(str)}
-        col_attrs = {'CellID': dsets['barcodes'].astype(str)}
-        layers = {'counts': matrix}
-        batch_add_sparse(loom_file=loom_file,
-                         layers=layers,
-                         row_attrs=row_attrs,
-                         col_attrs=col_attrs,
-                         append=False,
-                         empty_base=True,
-                         batch_size=batch_size)
-        if verbose:
-            t_end = time.time()
-            time_run, time_fmt = general_utils.format_run_time(t_write,
-                                                               t_end)
-            io_log.info('Wrote loom file in {0:.2f} {1}'.format(time_run,
-                                                                time_fmt))
+        mat_group = f.get_node(f.root, 'matrix')
+        # Get column attributes
+        barcodes = f.get_node(mat_group, 'barcodes').read().astype(str)
+        if barcode_prefix is None:
+            col_attrs['barcodes'] = barcodes
+        else:
+            barcodes = np.core.defchararray.add('{}_'.format(barcode_prefix),
+                                                barcodes)
+            col_attrs['CellID'] = barcodes
+        # Get layers
+        layers['counts'] = sparse.csc_matrix((getattr(mat_group,
+                                                      'data').read(),
+                                              getattr(mat_group,
+                                                      'indices').read(),
+                                              getattr(mat_group,
+                                                      'indptr').read()),
+                                             shape=getattr(mat_group,
+                                                           'shape').read())
+
+        # Get row attributes
+        feature_group = f.get_node(mat_group, 'features')
+        row_attrs['Accession'] = getattr(feature_group, 'id').read().astype(str)
+        row_attrs['Name'] = getattr(feature_group, 'name').read().astype(str)
+        row_attrs['10x_type'] = getattr(feature_group, 'feature_type').read().astype(str)
+        tag_keys = getattr(feature_group, '_all_tag_keys').read().astype(str)
+        for key in tag_keys:
+            row_attrs[key] = getattr(feature_group, key).read().astype(str)
+    # Make loom file
+    batch_add_sparse(loom_file=loom_file,
+                     layers=layers,
+                     row_attrs=row_attrs,
+                     col_attrs=col_attrs,
+                     append=append,
+                     empty_base=True,
+                     batch_size=batch_size,
+                     verbose=verbose)

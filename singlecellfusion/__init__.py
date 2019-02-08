@@ -8,9 +8,13 @@ __all__ = ['clustering',
            'general_utils',
            'neighbors',
            'imputation',
+           'imputation_helpers',
            'io',
            'loom_utils',
            'plot',
+           'plot_helpers',
+           'recipes',
+           'recipes_helpers',
            'qc',
            'smooth',
            'snmcseq',
@@ -26,4 +30,3 @@ logger = logging.getLogger(__name__)
 
 # Import packages
 from singlecellfusion import *
-
