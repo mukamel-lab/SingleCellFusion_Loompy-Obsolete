@@ -2,7 +2,8 @@
 
 __version__ = '0.1.0'
 __author__ = 'Mukamel Lab <lab@brainome.ucsd.edu>'
-__all__ = ['clustering',
+__all__ = ['cemba',
+           'clustering',
            'counts',
            'decomposition',
            'general_utils',

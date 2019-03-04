@@ -30,6 +30,7 @@ from sklearn.metrics import pairwise_distances
 import functools
 import logging
 import gc
+from numba import jit
 from . import general_utils
 from . import loom_utils
 from . import neighbors
@@ -330,7 +331,7 @@ def get_normalized_dist(dat_x,
     dist = pairwise_distances(dat_x, dat_y, metric=metric)
     return pd.DataFrame(dist)
 
-
+@jit
 def generate_coefficients(dat_x,
                           dat_y):
     """
@@ -353,6 +354,7 @@ def generate_coefficients(dat_x,
     else:
         raise ValueError('dimension mismatch')
     # Calculate coefficients
+    
     mean_x = dat_x.mean(axis=1)
     mean_y = dat_y.mean(axis=1)
     std_x = dat_x.std(axis=1,
@@ -744,7 +746,7 @@ def multimodal_adjacency(distance_arr,
         (neighbor_arr.shape[0], num_col))
     return a
 
-
+@jit
 def constrained_knn_search(distance_arr,
                            neighbor_arr,
                            num_other,
@@ -776,7 +778,7 @@ def constrained_knn_search(distance_arr,
     """
 
     num_arr = neighbor_arr.shape[0]
-    knn = sparse.lil_matrix((num_arr, num_other))
+    knn = np.zeros((num_arr, num_other))
     random_order = np.random.choice(range(neighbor_arr.shape[0]),
                                     size=neighbor_arr.shape[0],
                                     replace=False)
@@ -796,7 +798,7 @@ def constrained_knn_search(distance_arr,
                 to_drop = np.where(neighbor_arr == neighbor_idx)
                 distance_arr[to_drop[0], to_drop[1]] = np.inf
                 saturated.append(neighbor_idx)
-    return knn, saturated
+    return sparse.lil_matrix(knn), saturated
 
 
 def gen_impute_adj(loom_file,
