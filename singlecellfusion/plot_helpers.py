@@ -622,6 +622,7 @@ def plot_boxviolin(df_plot,
                    value_label,
                    color_label,
                    plot_type,
+                   cat_order=None,
                    title=None,
                    x_label=None,
                    y_label=None,
@@ -642,12 +643,22 @@ def plot_boxviolin(df_plot,
             violin
         x_label (str): Optional, label for x-axis
         y_label (str): Optional, label for y-axis
+        cat_order (str,list): Order of categorical variables
         title (str): Optional, title for plot
         legend (bool): Includes legend with plot
         output (str): Optional, saves figure to this file path
         figsize (tuple): Size of scatter plot figure
         close (bool): If true, closes matplotlib figure
     """
+    # Handle cat_order
+    if cat_order is None:
+        plot_order = general_utils.nat_sort(df_plot[category_label].unique())
+    elif isinstance(cat_order,str):
+        plot_order = [cat_order]
+    elif isinstance(cat_order,list):
+        plot_order = plot_order
+    else:
+        raise ValueError('cat_order must be  a list or string')
     # Make plot
     df_legend = df_plot[[category_label, color_label]]
     df_legend = df_legend.drop_duplicates(keep='first')
@@ -660,8 +671,7 @@ def plot_boxviolin(df_plot,
                     hue=category_label,
                     dodge=False,
                     palette=df_legend['color'].to_dict(),
-                    order=general_utils.nat_sort(
-                        df_plot[category_label].unique()),
+                    order=plot_order,
                     data=df_plot,
                     ax=ax)
     elif 'violin' in plot_type.lower():
@@ -670,8 +680,7 @@ def plot_boxviolin(df_plot,
                        hue=category_label,
                        dodge=False,
                        palette=df_legend['color'].to_dict(),
-                       order=general_utils.nat_sort(
-                           df_plot[category_label].unique()),
+                       order=plot_order,
                        data=df_plot,
                        ax=ax)
     else:
@@ -766,7 +775,7 @@ def prep_feature_dist(loom_file,
         if color_attr is None:
             df_plot = get_category_colors(df_plot=df_plot,
                                           category_label=category_attr,
-                                          color_label='color')
+                                          color_label=color_attr)
         else:
             df_plot['color'] = ds.ca[color_attr][col_idx]
     if highlight is not None:
@@ -816,7 +825,7 @@ def prep_categorical_dist(loom_file,
         if color_attr is None:
             df_plot = get_category_colors(df_plot=df_plot,
                                           category_label=category_attr,
-                                          color_label='color')
+                                          color_label=color_attr)
         else:
             df_plot['color'] = ds.ca[color_attr][col_idx]
     if highlight is not None:
