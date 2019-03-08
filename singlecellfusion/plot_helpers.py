@@ -825,9 +825,9 @@ def prep_categorical_dist(loom_file,
         if color_attr is None:
             df_plot = get_category_colors(df_plot=df_plot,
                                           category_label=category_attr,
-                                          color_label=color_attr)
+                                          color_label='color')
         else:
-            df_plot['color'] = ds.ca[color_attr][col_idx]
+            df_plot[color_attr] = ds.ca[color_attr][col_idx]
     if highlight is not None:
         if isinstance(highlight, str):
             highlight = [highlight]
