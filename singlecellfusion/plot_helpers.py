@@ -656,7 +656,7 @@ def plot_boxviolin(df_plot,
     elif isinstance(cat_order,str):
         plot_order = [cat_order]
     elif isinstance(cat_order,list):
-        plot_order = plot_order
+        plot_order = cat_order
     else:
         raise ValueError('cat_order must be  a list or string')
     # Make plot
