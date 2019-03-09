@@ -326,6 +326,8 @@ def get_category_colors(df_plot,
     Returns
         df_plot (dataframe): Same as input df_plot with added color column
     """
+    if color_label is None:
+        color_label = 'color'
     unq_cat = general_utils.nat_sort(df_plot[category_label].unique())
     col_opts = pd.DataFrame({category_label: unq_cat})
     col_opts[color_label] = get_random_colors(col_opts.shape[0])
