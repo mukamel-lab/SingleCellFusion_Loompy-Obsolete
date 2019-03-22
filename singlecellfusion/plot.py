@@ -936,9 +936,11 @@ def barplot_attr(loom_file,
         else:
             df_plot['color'] = ds.ca[color_attr][col_idx]
     # Handle highlighting
-    df_plot, highlight = ph.process_highlight(df_plot=df_plot,
+    df_plot, is_high = ph.process_highlight(df_plot=df_plot,
                                               highlight_attr=category_attr,
                                               highlight_values=highlight)
+    if is_high:
+        df_plot = df_plot.loc[df_plot.index[df_plot[category_attr].isin(highlight)]]
     # Prep for bar plot
     bar_info = df_plot.groupby(category_attr)[
         value_attr].value_counts().unstack().fillna(0)
