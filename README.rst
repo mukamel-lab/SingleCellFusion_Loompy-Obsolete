@@ -6,7 +6,7 @@ methylome, chromatin accessibility). For a given pair of data sets, SingleCellFu
 neighbors among cells from each modality. These neighbors are used to impute counts for each data set
 (for example, if integrating scRNA-seq and snATAC-seq cells, SingleCellFusion will generate imputed
 scRNA-seq counts for the snATAC-seq profiled cells and snATAC-seq counts for the scRNA-seq profiled cells).
-Cells profiled by each technique can then be analyzed together in a joint, lower-dimensional space.
+Cells profiled by each technique can then be analyzed together in a joint, lower dimensional space.
 
 
 The package is still under active development and function parameters will continue to change over time.
