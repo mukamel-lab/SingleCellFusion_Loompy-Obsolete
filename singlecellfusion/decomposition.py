@@ -7,10 +7,7 @@ Written by Wayne Doyle
 """
 import loompy
 import numpy as np
-import pandas as pd
 from sklearn.decomposition import IncrementalPCA
-from fitsne import FItSNE
-import umap
 import logging
 import time
 from . import loom_utils

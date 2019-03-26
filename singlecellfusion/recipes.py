@@ -6,7 +6,6 @@ Written by Wayne Doyle unless noted
 (C) 2019 Mukamel Lab GPLv2
 """
 
-import loompy
 from . import imputation
 from . import decomposition
 

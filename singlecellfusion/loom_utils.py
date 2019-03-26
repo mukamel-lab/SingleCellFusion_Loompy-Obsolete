@@ -8,9 +8,7 @@ Written by Wayne Doyle unless otherwise noted
 
 import loompy
 import numpy as np
-import pandas as pd
 import logging
-import warnings
 
 # Start log
 lu_log = logging.getLogger(__name__)
