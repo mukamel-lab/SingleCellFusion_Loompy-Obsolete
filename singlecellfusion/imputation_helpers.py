@@ -33,7 +33,6 @@ import gc
 from numba import jit
 from . import general_utils
 from . import loom_utils
-from . import neighbors
 
 # Start log
 ih_log = logging.getLogger(__name__)
@@ -255,6 +254,39 @@ def find_common_features(loom_x,
                                    loom_y))
 
 
+def normalize_adj(adj_mtx,
+                  axis,
+                  offset=1e-5):
+    """
+    Normalizes an adjacency matrix by its mean along an axis
+
+    Args:
+        adj_mtx (sparse matrix): Adjacency matrix
+        axis (str/int): Axis to normalize along
+            0 (int): Normalize along columns
+            1 (int): Normalize along rows
+            both (str): Normalize along columns, followed by rows
+            None: Returns adj_mtx
+        offset (float/int): Offset to avoid divide by zero errors
+
+    Returns:
+        norm_adj (sparse matrix): Normalized adjacency matrix
+    """
+    if axis == 0 or axis == 1:
+        diags = sparse.diags(1 / (adj_mtx.sum(axis=axis) + offset).A.ravel())
+        norm_adj = diags.dot(adj_mtx)
+    elif axis == 'both':
+        diags = sparse.diags(1 / (adj_mtx.sum(axis=0) + offset).A.ravel())
+        norm_adj = diags.dot(adj_mtx)
+        diags = sparse.diags(1 / (adj_mtx.sum(axis=1) + offset).A.ravel())
+        norm_adj = diags.dot(norm_adj)
+    elif axis is None:
+        norm_adj = adj_mtx
+    else:
+        raise ValueError('Unsupported value for axis {}'.format(axis))
+    return norm_adj
+
+
 def update_markov_values(coeff,
                          self_index,
                          other_index,
@@ -331,6 +363,7 @@ def get_normalized_dist(dat_x,
     dist = pairwise_distances(dat_x, dat_y, metric=metric)
     return pd.DataFrame(dist)
 
+
 @jit
 def generate_coefficients(dat_x,
                           dat_y):
@@ -354,7 +387,7 @@ def generate_coefficients(dat_x,
     else:
         raise ValueError('dimension mismatch')
     # Calculate coefficients
-    
+
     mean_x = dat_x.mean(axis=1)
     mean_y = dat_y.mean(axis=1)
     std_x = dat_x.std(axis=1,
@@ -746,6 +779,7 @@ def multimodal_adjacency(distance_arr,
         (neighbor_arr.shape[0], num_col))
     return a
 
+
 @jit
 def constrained_knn_search(distance_arr,
                            neighbor_arr,
@@ -924,9 +958,9 @@ def gen_impute_knn(loom_target,
     adj = adj.tocsc()[:, other_idx].tocsr()
 
     # Normalize
-    adj = neighbors.normalize_adj(adj_mtx=adj,
-                                  axis=1,
-                                  offset=offset)
+    adj = normalize_adj(adj_mtx=adj,
+                        axis=1,
+                        offset=offset)
     return adj
 
 
@@ -997,9 +1031,9 @@ def get_markov_impute(loom_target,
     # Generate mutual neighbors adjacency
     w_impute = (ax_xy.multiply(ax_yx.T))
     # Normalize
-    w_impute = neighbors.normalize_adj(adj_mtx=w_impute,
-                                       axis=1,
-                                       offset=offset)
+    w_impute = normalize_adj(adj_mtx=w_impute,
+                             axis=1,
+                             offset=offset)
     # Get cells
     c_x = len(np.sort(np.unique(w_impute.nonzero()[0])))
     if verbose:

@@ -2,24 +2,12 @@
 
 __version__ = '0.1.0'
 __author__ = 'Mukamel Lab <lab@brainome.ucsd.edu>'
-__all__ = ['cemba',
-           'clustering',
-           'counts',
-           'decomposition',
+__all__ = ['decomposition',
            'general_utils',
-           'neighbors',
            'imputation',
            'imputation_helpers',
-           'io',
            'loom_utils',
-           'plot',
-           'plot_helpers',
            'recipes',
-           'recipes_helpers',
-           'qc',
-           'smooth',
-           'snmcseq',
-           'statistics'
            ]
 # Set-up logger
 import logging
