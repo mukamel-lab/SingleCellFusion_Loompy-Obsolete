@@ -36,4 +36,3 @@ k-nearest neighbors
 -------------------
 This is the most relaxed method for generating imputed counts, as all cells will make neighbors in the
 opposite data set.
-
