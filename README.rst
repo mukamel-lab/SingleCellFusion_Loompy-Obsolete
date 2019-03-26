@@ -79,7 +79,7 @@ These imputed counts can be used to perform clustering and data reduction in the
 
 Tutorials and FAQs
 -------------------
-Coming soon!
+Our `FAQs <docs/faqs.rst>`_ have some basic information on running SingleCellFusion.
 
 
 Authors
