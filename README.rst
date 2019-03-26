@@ -81,7 +81,7 @@ Tutorials and FAQs
 -------------------
 Our `FAQs <docs/faqs.rst>`_ have some basic information on running SingleCellFusion.
 
-For a brief description of how SingleCellFusion please check out this `link <docs/faqs.rst>`_.
+For a brief description of how SingleCellFusion please check out this `link <docs/scf_description.rst>`_.
 
 
 Authors
