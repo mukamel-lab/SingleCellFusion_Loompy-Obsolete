@@ -22,10 +22,12 @@ graph specified, and are described below.
 
 Direct mutual nearest neighbors
 -------------------------------
-
+.. image:: mnn_direct.png
+  :width: 400
+  :alt: cartoon of direct MNN
 
 This is the most conservative method for generating imputed counts, only cells that make direct mutual
-nearest neighbors will receive imputed data. This method typically leads to good integrations but can
+nearest neighbors will receive imputed data. This method typically leads to good integration but can
 result in the loss of large fractions of cells from the analysis if mutual neighbors were not found for them.
 
 
@@ -33,12 +35,15 @@ Mutual nearest neighbors with rescue
 -------------------------------------
 .. image:: mnn_rescue.png
   :width: 400
-  :alt: cartoon of direct MNN
+  :alt: cartoon of rescue MNN
 
 This is a more lenient method for generating imputed counts, and all cells will receive imputed data. This
 method will enable all cells to be analyzed, and is our recommended approach.
 
 k-nearest neighbors
 -------------------
+.. image:: knn.png
+  :width: 400
+  :alt: cartoon of kNN
 This is the most relaxed method for generating imputed counts, as all cells will make neighbors in the
 opposite data set.
