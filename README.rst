@@ -96,6 +96,6 @@ All authors are members of the `Mukamel Lab <https://brainome.ucsd.edu>`_.
 
 Acknowledgments
 ---------------
-
-We are grateful for support from the Chan-Zuckerberg Initiative, and from the NIH BRAIN
-Initiative U19 Center for Epigenomics of the Mouse Brain Atlas (CEMBA).
+We are grateful for support from the Chan-Zuckerberg Initiative and from the NIH
+BRAIN Initiative U19 Center for Epigenomics of the Mouse Brain Atlas
+(`CEMBA <https://biccn.org/teams/u19-ecker/>`_).
