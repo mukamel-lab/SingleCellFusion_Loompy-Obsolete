@@ -40,6 +40,15 @@ Another cause of slow code is that the batch size for processing code (see "Why 
 memory?" above) is too small. If you are not having memory issues, we recommend increasing the batch size
 to speed up the code.
 
+Why am I not finding many neighbors?
+-------------------------------------
+If you expect that similar cell types should be present in both data sets, this could be due to
+the sparseness of your data. We have found that if you first smooth your data (we highly
+recommend using `MAGIC <https://github.com/KrishnaswamyLab/MAGIC>`_. You can then use the
+smoothed data to find nearest neighbors, and impute on the observed data. A tutorial using our
+loom-based method of smoothing will be uploaded soon.
+ 
+
 Is SingleCellFusion just for integrating data from different sequencing modalities?
 -----------------------------------------------------------------------------------
 No, theoretically this pipeline could be applied to integration across species or to find common cell
