@@ -47,7 +47,7 @@ the sparseness of your data. We have found that if you first smooth your data (w
 recommend using `MAGIC <https://github.com/KrishnaswamyLab/MAGIC>`_. You can then use the
 smoothed data to find nearest neighbors, and impute on the observed data. A tutorial using our
 loom-based method of smoothing will be uploaded soon.
- 
+
 
 Is SingleCellFusion just for integrating data from different sequencing modalities?
 -----------------------------------------------------------------------------------
