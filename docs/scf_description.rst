@@ -108,7 +108,7 @@ restricted to only making a set *j* number of neighbors. The maximum number of n
 in the opposite modality can make is given by the equation:
 
 .. image:: n_neighbors_knn.png
-  :width: 200
+  :width: 400
   :alt: equation 1 of knn
 
 where *j* is the maximum number of neighbors a cell in modality *m'* can make, *k* is the required
