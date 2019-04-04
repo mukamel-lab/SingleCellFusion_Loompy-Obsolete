@@ -30,6 +30,10 @@ the following commands on the command line::
     cd SingleCellFusion
     python setup.py install
 
+If you have trouble with dependencies, we have a
+`guide <https://github.com/mukamel-lab/mop/blob/master/docs/mop_conda_guide.rst>`_
+to generating a usable conda environment in SingleCellFusion's sister repository
+`MoP <https://github.com/mukamel-lab/mop/>`_.
 
 Basic Usage
 -----------
