@@ -86,6 +86,9 @@ Our `FAQs <docs/faqs.rst>`_ have some basic information on running SingleCellFus
 For a brief description of how SingleCellFusion works please check out this
 `link <docs/scf_description.rst>`_.
 
+If you need information on performing preliminary analyses on loom files, please check out
+SingleCellFusion's sister repository `MoP <https://github.com/mukamel-lab/mop/>`_.
+
 
 Authors
 -------
