@@ -43,10 +43,14 @@ def prep_for_imputation(loom_x,
                         var_attr_y='highly_variable',
                         feature_id_x='Accession',
                         feature_id_y='Accession',
-                        n_feat_x=8000,
-                        n_feat_y=8000,
                         var_measure_x='vmr',
                         var_measure_y='vmr',
+                        per_decile_x=False,
+                        per_decile_y=False,
+                        n_feat_x=8000,
+                        n_feat_y=8000,
+                        feat_pct_x=30,
+                        feat_pct_y=30,
                         remove_id_version=False,
                         find_common=True,
                         common_attr='common_variable',
@@ -82,8 +86,6 @@ def prep_for_imputation(loom_x,
         var_attr_y (str): Attribute specifying highly variable features
         feature_id_x (str): Attribute containing unique feature IDs
         feature_id_y (str): Attribute containing unique feature IDs
-        n_feat_x (int): Number of highly variable features
-        n_feat_y (int): Number of highly variable features
         var_measure_x (str): Method for determining highly variable features
             vmr: variance mean ratio
             sd or std: standard deviation
@@ -92,6 +94,17 @@ def prep_for_imputation(loom_x,
             vmr: variance mean ratio
             sd or std: standard deviation
             cv: coeffecient of variation
+        per_decile_x (bool): Specifies how to determine variable features
+            if True: get variable features per decile of mean gene expression
+            if False: get variable features irregardless of mean gene expression
+        n_feat_x (int): Number of highly variable features
+            Used if per_decile_x is False
+        n_feat_y (int): Number of highly variable features
+            Used if per_decile_y is False
+        feat_pct_x (int): Gets feat_pct_x percent of features per decile
+            Used if per_decile_x is True
+        feat_pct_y (int): Gets feat_pct_y percent of features per decile
+            Used if per_decile_y is True
         remove_id_version (bool): Remove GENCODE ID versions from feature IDs
         find_common (bool): Find highly variable features that are in common
         common_attr (str): Name of attribute specifying common features
@@ -124,36 +137,60 @@ def prep_for_imputation(loom_x,
     # Get values for k
     if mutual_k_x_to_y == 'auto':
         mutual_k_x_to_y = ih.auto_find_mutual_k(loom_file=loom_y,
-                                                valid_attr=valid_ca_y,
+                                                valid_ca=valid_ca_y,
                                                 verbose=verbose)
     if mutual_k_y_to_x == 'auto':
         mutual_k_y_to_x = ih.auto_find_mutual_k(loom_file=loom_x,
-                                                valid_attr=valid_ca_x,
+                                                valid_ca=valid_ca_x,
                                                 verbose=verbose)
     max_k = np.max([mutual_k_x_to_y, mutual_k_y_to_x])
     # Find highly variable features
     if gen_var_x:
-        ih.get_n_variable_features(loom_file=loom_x,
+        if per_decile_x:
+            ih.get_decile_variable(loom_file=loom_x,
                                    layer=observed_x,
                                    out_attr=var_attr_x,
                                    id_attr=feature_id_x,
-                                   n_feat=n_feat_x,
+                                   percentile=feat_pct_x,
                                    measure=var_measure_x,
-                                   row_attr=valid_ra_x,
-                                   col_attr=valid_ca_x,
+                                   valid_ra=valid_ra_x,
+                                   valid_ca=valid_ca_x,
                                    batch_size=batch_x,
                                    verbose=verbose)
+        else:
+            ih.get_n_variable_features(loom_file=loom_x,
+                                       layer=observed_x,
+                                       out_attr=var_attr_x,
+                                       id_attr=feature_id_x,
+                                       n_feat=n_feat_x,
+                                       measure=var_measure_x,
+                                       valid_ra=valid_ra_x,
+                                       valid_ca=valid_ca_x,
+                                       batch_size=batch_x,
+                                       verbose=verbose)
     if gen_var_y:
-        ih.get_n_variable_features(loom_file=loom_y,
+        if per_decile_y:
+            ih.get_decile_variable(loom_file=loom_y,
                                    layer=observed_y,
                                    out_attr=var_attr_y,
                                    id_attr=feature_id_y,
-                                   n_feat=n_feat_y,
+                                   percentile=feat_pct_y,
                                    measure=var_measure_y,
-                                   row_attr=valid_ra_y,
-                                   col_attr=valid_ca_y,
+                                   valid_ra=valid_ra_y,
+                                   valid_ca=valid_ca_y,
                                    batch_size=batch_y,
                                    verbose=verbose)
+        else:
+            ih.get_n_variable_features(loom_file=loom_y,
+                                       layer=observed_y,
+                                       out_attr=var_attr_y,
+                                       id_attr=feature_id_y,
+                                       n_feat=n_feat_y,
+                                       measure=var_measure_y,
+                                       valid_ra=valid_ra_y,
+                                       valid_ca=valid_ca_y,
+                                       batch_size=batch_y,
+                                       verbose=verbose)
     # Find common variable features
     if find_common:
         ih.find_common_features(loom_x,
@@ -291,20 +328,20 @@ def impute_between_datasets(loom_x,
     # Handle inputs
     if mutual_k_x_to_y == 'auto':
         mutual_k_x_to_y = ih.auto_find_mutual_k(loom_file=loom_y,
-                                                valid_attr=valid_ca_y,
+                                                valid_ca=valid_ca_y,
                                                 verbose=verbose)
     if mutual_k_y_to_x == 'auto':
         mutual_k_y_to_x = ih.auto_find_mutual_k(loom_file=loom_x,
-                                                valid_attr=valid_ca_x,
+                                                valid_ca=valid_ca_x,
                                                 verbose=verbose)
     if neighbor_method == "rescue":
         if rescue_k_x == 'auto':
             rescue_k_x = ih.auto_find_rescue_k(loom_file=loom_x,
-                                               valid_attr=valid_ca_x,
+                                               valid_ca=valid_ca_x,
                                                verbose=verbose)
         if rescue_k_y == 'auto':
             rescue_k_y = ih.auto_find_rescue_k(loom_file=loom_y,
-                                               valid_attr=valid_ca_y,
+                                               valid_ca=valid_ca_y,
                                                verbose=verbose)
         ka_x = ih.check_ka(k=rescue_k_x,
                            ka=ka_x)

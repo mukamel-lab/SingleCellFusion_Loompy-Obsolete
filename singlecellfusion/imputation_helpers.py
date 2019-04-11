@@ -38,14 +38,238 @@ from . import loom_utils
 ih_log = logging.getLogger(__name__)
 
 
+def batch_mean_and_std(loom_file,
+                       layer,
+                       axis=None,
+                       valid_ca=None,
+                       valid_ra=None,
+                       batch_size=512,
+                       verbose=False):
+    """
+    Batch calculates mean and standard deviation
+
+    Args:
+        loom_file (str): Path to loom file containing mC/C counts
+        layer (str): Layer containing mC/C counts
+        axis (int): Axis to calculate mean and standard deviation
+            None: values are for entire layer
+            0: Statistics are for cells (will read all cells into memory)
+            1: Statistics are for features (will read all features into memory)
+        valid_ca (str): Optional, only use cells specified by valid_ca
+        valid_ra (str): Optional, only use features specified by valid_ra
+        batch_size (int): Number of elements per chunk
+            If axis is None, chunks are number of cells
+            If axis == 0, chunks are number of features
+            If axis == 1, chunks are number of cells
+        verbose (boolean): If true, print helpful progress messages
+
+    Returns:
+        mean (float): Mean value for specified layer
+        std (float): Standard deviation value for specified layer
+
+    Assumptions:
+        (row/col)_attr specifies a boolean array attribute
+
+    To Do:
+        Make axis selection consistent across all functions
+
+    Based on code from:
+        http://notmatthancock.github.io/2017/03/23/simple-batch-stat-updates.html
+    """
+    # Set defaults
+    old_mean = None
+    old_std = None
+    old_obs = None
+    first_iter = True
+    if axis is None:
+        loom_axis = 1
+    else:
+        loom_axis = axis
+    # Start log
+    if verbose:
+        ih_log.info('Calculating statistics for {}'.format(loom_file))
+        t0 = time.time()
+    # Get indices
+    layers = loom_utils.make_layer_list(layers=layer)
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        for (_, selection, view) in ds.scan(axis=loom_axis,
+                                            layers=layers,
+                                            batch_size=batch_size):
+            # Parse data
+            dat = view.layers[layer][:, :]
+            if valid_ca:
+                col_idx = view.ca[valid_ca].astype(bool)
+            else:
+                col_idx = np.ones((view.shape[1],), dtype=bool)
+            if valid_ra:
+                row_idx = view.ra[valid_ra].astype(bool)
+            else:
+                row_idx = np.ones((view.shape[0],), dtype=bool)
+            if not np.any(col_idx) or not np.any(row_idx):
+                continue
+            if axis is None:
+                dat = dat[row_idx, :][:, col_idx]
+            elif axis == 0:
+                dat[:, np.logical_not(col_idx)] = 0
+                dat = dat[row_idx, :]
+            elif axis == 1:
+                dat[np.logical_not(row_idx), :] = 0
+                dat = dat[:, col_idx]
+            # Get new values
+            new_mean = np.mean(dat, axis=axis)
+            new_std = np.std(dat, axis=axis)
+            new_obs = dat.shape[1]
+            # Update means
+            if first_iter:
+                old_mean = new_mean
+                old_std = new_std
+                old_obs = new_obs
+                first_iter = False
+            else:
+                # Get updated values
+                upd_mean = (old_obs / (old_obs + new_obs) * old_mean +
+                            new_obs / (old_obs + new_obs) * new_mean)
+                upd_std = np.sqrt(old_obs / (old_obs + new_obs) * old_std ** 2 +
+                                  new_obs / (old_obs + new_obs) * new_std ** 2 +
+                                  old_obs * new_obs / (old_obs + new_obs) ** 2 *
+                                  (old_mean - new_mean) ** 2)
+                upd_obs = old_obs + new_obs
+                # Perform update
+                old_mean = upd_mean
+                old_std = upd_std
+                old_obs = upd_obs
+    # Set values
+    my_mean = old_mean
+    my_std = old_std
+    # Restrict to valid cells/features
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ca,
+                                        columns=True,
+                                        inverse=False)
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ra,
+                                        columns=False,
+                                        inverse=False)
+    if axis == 0:
+        my_mean = my_mean[col_idx]
+        my_std = my_std[col_idx]
+    elif axis == 1:
+        my_mean = my_mean[row_idx]
+        my_std = my_std[row_idx]
+    if my_mean is None:
+        raise ValueError('Could not calculate statistics')
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        ih_log.info(
+            'Calculated statistics in {0:.2f} {1}'.format(time_run, time_fmt))
+    return [my_mean, my_std]
+
+
+def get_decile_variable(loom_file,
+                        layer,
+                        out_attr=None,
+                        id_attr='Accession',
+                        percentile=30,
+                        measure='vmr',
+                        valid_ra=None,
+                        valid_ca=None,
+                        batch_size=512,
+                        verbose=False):
+    """
+    Generates an attribute indicating the highest variable features per decile
+
+    Args:
+        loom_file (str): Path to loom file
+        layer (str): Layer containing relevant counts
+        out_attr (str): Name of output attribute which will specify features
+            Defaults to hvf_{n}
+        id_attr (str): Attribute specifying unique feature IDs
+        percentile (int): Percent of highly variable features per decile
+        measure (str): Method of measuring variance
+            vmr: variance mean ratio
+            sd/std: standard deviation
+            cv: coefficient of variation
+        valid_ra (str): Optional, attribute to restrict features by
+        valid_ca (str): Optional, attribute to restrict cells by
+        batch_size (int): Size of chunks
+            Will generate a dense array of batch_size by cells
+        verbose (bool): Print logging messages
+    """
+    if verbose:
+        ih_log.info(
+            'Finding {0}% variable features per decile for {1}'.format(
+                percentile, loom_file))
+        t0 = time.time()
+    # Get valid indices
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ra,
+                                        columns=False,
+                                        as_bool=True,
+                                        inverse=False)
+    # Determine variability
+    my_mean, my_std = batch_mean_and_std(loom_file=loom_file,
+                                         layer=layer,
+                                         axis=1,
+                                         valid_ca=valid_ca,
+                                         valid_ra=valid_ca,
+                                         batch_size=batch_size,
+                                         verbose=verbose)
+    # Find highly variable
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        feat_labels = ds.ra[id_attr][row_idx]
+        feat_idx = pd.Series(np.zeros((ds.shape[0])),
+                             index=ds.ra[id_attr])
+    if measure.lower() == 'sd' or measure.lower() == 'std':
+        tmp_var = pd.Series(my_std, index=feat_labels)
+    elif measure.lower() == 'vmr':
+        my_var = my_std ** 2
+        my_vmr = (my_var + 1) / (my_mean + 1)
+        tmp_var = pd.Series(my_vmr, index=feat_labels)
+    elif measure.lower() == 'cv':
+        my_cv = (my_std + 1) / (my_mean + 1)
+        tmp_var = pd.Series(my_cv, index=feat_labels)
+    else:
+        err_msg = 'Unsupported measure value ({})'.format(measure)
+        if verbose:
+            ih_log.error(err_msg)
+        raise ValueError(err_msg)
+    # Get variable
+    my_mean = pd.Series(my_mean, index=feat_labels)
+    feat_deciles = pd.qcut(my_mean,
+                           q=10,
+                           labels=False).to_frame('decile')
+    hvf = []
+    for decile, batch_info in feat_deciles.groupby('decile'):
+        gene_group = batch_info.index.values
+        var_gg = tmp_var.loc[gene_group]
+        # Genes per decile
+        hvf_group = gene_group[var_gg > np.percentile(var_gg, 100 - percentile)]
+        if decile != 9:  # Ignore final decile
+            hvf.append(hvf_group)
+    # Add to loom file
+    hvf = np.hstack(hvf)
+    feat_idx.loc[hvf] = 1
+    if out_attr is None:
+        out_attr = 'hvf_decile_{}'.format(percentile)
+    ds.ra[out_attr] = feat_idx.values.astype(int)
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        ih_log.info(
+            'Found {0} variable features in {1:.2f} {2}'.format(hvf.shape[0],
+                                                                time_run,
+                                                                time_fmt))
+
+
 def get_n_variable_features(loom_file,
                             layer,
                             out_attr=None,
                             id_attr='Accession',
                             n_feat=4000,
                             measure='vmr',
-                            row_attr=None,
-                            col_attr=None,
+                            valid_ra=None,
+                            valid_ca=None,
                             batch_size=512,
                             verbose=False):
     """
@@ -62,69 +286,68 @@ def get_n_variable_features(loom_file,
             vmr: variance mean ratio
             sd/std: standard deviation
             cv: coefficient of variation
-        row_attr (str): Optional, attribute to restrict features by
-        col_attr (str): Optional, attribute to restrict cells by
+        valid_ra (str): Optional, attribute to restrict features by
+        valid_ca (str): Optional, attribute to restrict cells by
         batch_size (int): Size of chunks
             Will generate a dense array of batch_size by cells
         verbose (bool): Print logging messages
     """
-    # Get valid indices
-    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                        attr=col_attr,
-                                        columns=True,
-                                        as_bool=True,
-                                        inverse=False)
-    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                        attr=row_attr,
-                                        columns=False,
-                                        as_bool=True,
-                                        inverse=False)
-    layers = loom_utils.make_layer_list(layers=layer)
     if verbose:
         ih_log.info(
             'Finding {} variable features for {}'.format(n_feat, loom_file))
         t0 = time.time()
+    # Get valid indices
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ra,
+                                        columns=False,
+                                        as_bool=True,
+                                        inverse=False)
     # Determine variability
-    with loompy.connect(filename=loom_file) as ds:
-        tmp_var = pd.Series(np.zeros((ds.shape[0],), dtype=float),
-                            index=ds.ra[id_attr])
-        for (_, selection, view) in ds.scan(items=row_idx,
-                                            axis=0,
-                                            layers=layers,
-                                            batch_size=batch_size):
-            dat = view.layers[layer][:, col_idx]
-            if measure.lower() == 'sd' or measure.lower() == 'std':
-                tmp_var.iloc[selection] = np.std(dat, axis=1)
-            elif measure.lower() == 'vmr':
-                tmp_var.iloc[selection] = np.var(dat, axis=1) / np.mean(dat,
-                                                                        axis=1)
-            elif measure.lower() == 'cv':
-                tmp_var.iloc[selection] = np.std(dat, axis=1) / np.mean(dat,
-                                                                        axis=1)
-            else:
-                err_msg = 'Unsupported measure value ({})'.format(measure)
-                if verbose:
-                    ih_log.error(err_msg)
-                raise ValueError(err_msg)
-        # Get top n variable features
-        n_feat = min(n_feat, tmp_var.shape[0])
-        hvf = tmp_var.sort_values(ascending=False).head(n_feat).index.values
-        tmp_idx = pd.Series(np.zeros((ds.shape[0])),
-                            index=ds.ra[id_attr])
-        tmp_idx.loc[hvf] = 1
-        if out_attr is None:
-            out_attr = 'hvf_{}'.format(n_feat)
-        ds.ra[out_attr] = tmp_idx.values.astype(int)
+    my_mean, my_std = batch_mean_and_std(loom_file=loom_file,
+                                         layer=layer,
+                                         axis=1,
+                                         valid_ca=valid_ca,
+                                         valid_ra=valid_ca,
+                                         batch_size=batch_size,
+                                         verbose=verbose)
+    # Find highly variable
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        feat_labels = ds.ra[id_attr][row_idx]
+        feat_idx = pd.Series(np.zeros((ds.shape[0])),
+                             index=ds.ra[id_attr])
+    if measure.lower() == 'sd' or measure.lower() == 'std':
+        tmp_var = pd.Series(my_std, index=feat_labels)
+    elif measure.lower() == 'vmr':
+        my_var = my_std ** 2
+        my_vmr = (my_var + 1) / (my_mean + 1)
+        tmp_var = pd.Series(my_vmr, index=feat_labels)
+    elif measure.lower() == 'cv':
+        my_cv = (my_std + 1) / (my_mean + 1)
+        tmp_var = pd.Series(my_cv, index=feat_labels)
+    else:
+        err_msg = 'Unsupported measure value ({})'.format(measure)
+        if verbose:
+            ih_log.error(err_msg)
+        raise ValueError(err_msg)
+    # Get top n variable features
+    n_feat = min(n_feat, tmp_var.shape[0])
+    hvf = tmp_var.sort_values(ascending=False).head(n_feat).index.values
+    feat_idx.loc[hvf] = 1
+    if out_attr is None:
+        out_attr = 'hvf_nfeat_{}'.format(n_feat)
+    ds.ra[out_attr] = feat_idx.values.astype(int)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
         ih_log.info(
-            'Found variable features in {0:.2f} {1}'.format(time_run, time_fmt))
+            'Found {0} variable features in {1:.2f} {2}'.format(hvf.shape[0],
+                                                                time_run,
+                                                                time_fmt))
 
 
 def prep_for_common(loom_file,
                     id_attr='Accession',
-                    valid_attr=None,
+                    valid_ra=None,
                     remove_version=False):
     """
     Generates objects for find_common_features
@@ -133,13 +356,13 @@ def prep_for_common(loom_file,
         loom_file (str): Path to loom file
         id_attr (str): Attribute specifying unique feature IDs
         remove_version (bool): Remove GENCODE gene versions from IDs
-        valid_attr (str): Optional, attribute that specifies desired features
+        valid_ra (str): Optional, attribute that specifies desired features
 
     Returns:
         features (ndarray): Array of unique feature IDs
     """
     valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                          attr=valid_attr,
+                                          attr=valid_ra,
                                           columns=False,
                                           as_bool=True,
                                           inverse=False)
@@ -172,7 +395,7 @@ def add_common_features(loom_file,
     feat_ids = prep_for_common(loom_file=loom_file,
                                id_attr=id_attr,
                                remove_version=remove_version,
-                               valid_attr=None)
+                               valid_ra=None)
     with loompy.connect(filename=loom_file) as ds:
         logical_idx = pd.Series(data=np.zeros((ds.shape[0],),
                                               dtype=int),
@@ -213,11 +436,11 @@ def find_common_features(loom_x,
     # Get features
     feat_x = prep_for_common(loom_file=loom_x,
                              id_attr=feature_id_x,
-                             valid_attr=valid_ra_x,
+                             valid_ra=valid_ra_x,
                              remove_version=remove_version)
     feat_y = prep_for_common(loom_file=loom_y,
                              id_attr=feature_id_y,
-                             valid_attr=valid_ra_y,
+                             valid_ra=valid_ra_y,
                              remove_version=remove_version)
     # Find common features
     feats = [feat_x, feat_y]
@@ -1585,21 +1808,21 @@ def loop_impute_data(loom_source,
 
 
 def auto_find_mutual_k(loom_file,
-                       valid_attr=None,
+                       valid_ca=None,
                        verbose=False):
     """
     Automatically determines the optimum k for mutual nearest neighbors
 
     Args:
         loom_file (str): Path to loom file
-        valid_attr (str): Optional, attribute specifying cells to include
+        valid_ca (str): Optional, attribute specifying cells to include
         verbose (bool): Print logging messages
 
     Returns:
         k (int): Optimum k for mutual nearest neighbors
     """
     valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                          attr=valid_attr,
+                                          attr=valid_ca,
                                           columns=True,
                                           as_bool=True,
                                           inverse=False)
@@ -1614,21 +1837,21 @@ def auto_find_mutual_k(loom_file,
 
 
 def auto_find_rescue_k(loom_file,
-                       valid_attr,
+                       valid_ca,
                        verbose=False):
     """
     Automatically determines the optimum k for rescuing non-MNNs
 
     Args:
         loom_file (str): Path to loom file
-        valid_attr (str): Optional, attribute specifying cells to include
+        valid_ca (str): Optional, attribute specifying cells to include
         verbose (bool): Print logging messages
 
     Returns:
         k (int): Optimum k for rescue
     """
     valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                          attr=valid_attr,
+                                          attr=valid_ca,
                                           columns=True,
                                           as_bool=True,
                                           inverse=False)
