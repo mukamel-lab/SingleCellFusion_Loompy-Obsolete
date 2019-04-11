@@ -252,7 +252,8 @@ def get_decile_variable(loom_file,
     feat_idx.loc[hvf] = 1
     if out_attr is None:
         out_attr = 'hvf_decile_{}'.format(percentile)
-    ds.ra[out_attr] = feat_idx.values.astype(int)
+    with loompy.connect(loom_file) as ds:
+        ds.ra[out_attr] = feat_idx.values.astype(int)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
@@ -335,7 +336,8 @@ def get_n_variable_features(loom_file,
     feat_idx.loc[hvf] = 1
     if out_attr is None:
         out_attr = 'hvf_nfeat_{}'.format(n_feat)
-    ds.ra[out_attr] = feat_idx.values.astype(int)
+    with loompy.connect(loom_file) as ds:
+        ds.ra[out_attr] = feat_idx.values.astype(int)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
