@@ -97,6 +97,9 @@ def prep_for_imputation(loom_x,
         per_decile_x (bool): Specifies how to determine variable features
             if True: get variable features per decile of mean gene expression
             if False: get variable features irregardless of mean gene expression
+        per_decile_y (bool): Specifies how to determine variable features
+            if True: get variable features per decile of mean gene expression
+            if False: get variable features irregardless of mean gene expression
         n_feat_x (int): Number of highly variable features
             Used if per_decile_x is False
         n_feat_y (int): Number of highly variable features
