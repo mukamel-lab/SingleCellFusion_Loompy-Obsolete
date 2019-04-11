@@ -212,7 +212,7 @@ def get_decile_variable(loom_file,
                                          layer=layer,
                                          axis=1,
                                          valid_ca=valid_ca,
-                                         valid_ra=valid_ca,
+                                         valid_ra=valid_ra,
                                          batch_size=batch_size,
                                          verbose=verbose)
     # Find highly variable
@@ -308,7 +308,7 @@ def get_n_variable_features(loom_file,
                                          layer=layer,
                                          axis=1,
                                          valid_ca=valid_ca,
-                                         valid_ra=valid_ca,
+                                         valid_ra=valid_ra,
                                          batch_size=batch_size,
                                          verbose=verbose)
     # Find highly variable
