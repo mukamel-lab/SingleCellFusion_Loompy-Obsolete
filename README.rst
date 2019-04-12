@@ -100,6 +100,6 @@ All authors are members of the `Mukamel Lab <https://brainome.ucsd.edu>`_.
 
 Acknowledgments
 ---------------
-We are grateful for support from the Chan-Zuckerberg Initiative program on `Collaborative computational tools for the human cell atlas <https://grants.czi.technology/>` (grant 183111) and from the NIH
+We are grateful for support from the Chan-Zuckerberg Initiative program on `Collaborative computational tools for the human cell atlas <https://grants.czi.technology/>`_ (grant 183111) and from the NIH
 BRAIN Initiative U19 Center for Epigenomics of the Mouse Brain Atlas
 (`CEMBA <https://biccn.org/teams/u19-ecker/>`_).
