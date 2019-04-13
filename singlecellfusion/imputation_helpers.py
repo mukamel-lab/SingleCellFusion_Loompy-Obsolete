@@ -1106,8 +1106,7 @@ def generate_csls_distance(loom_x,
                                            batch_size=batch_x):
             # Get data
             r_x = np.array(dat_x.ca[dist_x][:, :check_k]).mean(axis=1)
-            if(constrianed):
-                q_x = np.array(dat_x.ca["density_dist"][:, :check_k]).mean(axis=1)
+
             dat_x = dat_x.layers[observed_x][row_x, :].T
             
             if metric == "correlation": 
@@ -1138,8 +1137,6 @@ def generate_csls_distance(loom_x,
                                                    batch_size=batch_y):
                     
                     r_y = np.array(dat_y.ca[dist_y][:, :check_k]).mean(axis=1)
-                    if(constrianed):
-                        q_y = np.array(dat_y.ca["density_dist"][:, :check_k]).mean(axis=1)
                     dat_y = dat_y.layers[observed_y][row_y, :].T
                     dat_y = pd.DataFrame((dat_y - dat_y.mean()) / dat_y.std())
                     dat_y.columns = y_feat
