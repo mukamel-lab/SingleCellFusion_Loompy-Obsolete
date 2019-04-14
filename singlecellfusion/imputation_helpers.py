@@ -970,6 +970,225 @@ def generate_correlations(loom_x,
             'Generated correlations in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
+@jit
+def csls_dist(distances, 
+              r_x,
+              r_y,
+              avg_weight = .1):
+
+    """
+    finds adjusted csls distances
+
+    Args:
+        
+        observed_x (str): Name of layer containing counts
+        r_x (numpy array): Array of average cross modality distances
+            for modality x
+        r_y (numpy array): Array of average cross modality distances
+            for modality y
+
+    """
+    csls_distances = 2 * distances
+    
+    for pair in zip(np.arange(distances.shape[0]), np.arange(distances.shape[1])):
+        csls_distances[pair[0], pair[1]] = csls_distances[pair[0], pair[1]]\
+                                        - avg_weight * (r_x[pair[0]] + r_y[pair[1]])
+
+    return csls_distances
+    
+    
+def generate_csls_distance(loom_x,
+                           observed_x,
+                           dist_x,
+                           idx_x,
+                           max_k_x,
+                           loom_y,
+                           observed_y,
+                           dist_y,
+                           idx_y,
+                           max_k_y,
+                           direction,
+                           feature_id_x,
+                           feature_id_y,
+                           check_k = 20,
+                           avg_weight = .1,
+                           metric="correlation",
+                           valid_ca_x=None,
+                           ra_x=None,
+                           valid_ca_y=None,
+                           ra_y=None,
+                           batch_x=512,
+                           batch_y=512,
+                           remove_version=False,
+                           verbose=False):
+    """
+    Adds csls adjusted distances between two modalites to loom files
+
+    Args:
+        loom_x (str): Path to loom file
+        observed_x (str): Name of layer containing counts
+        corr_dist_x (str): Name of distance attribute for correlations
+        corr_idx_x (str): Name of index attribute for correlations
+        max_k_x (int): Maximum k needed
+        loom_y (str): Path to loom file
+        observed_y (str): Name of layer containing counts
+        corr_dist_y (str): Name of distance attribute for correlations
+        corr_idx_y (str): Name of index attribute for correlations
+        max_k_y (int): Maximum k needed
+        direction (str): Direction of expected correlation
+            negative/- or positive/+
+        feature_id_x (str): Attribute containing feature IDs
+        feature_id_y (str): Attribute containing feature IDs
+        check_k (int) : a number of nearest neighbors used to find average
+            cross modality distances
+        avg_weight (float) : a wighting factor which decides how much
+            cells benefit from having a large avergae distance
+        metric (str) : how distances bewteen cells are measured. 
+            correlation by default. 
+        valid_ca_x (str): Name of column attribute to restrict counts by
+        ra_x (str): Name of row attribute to restrict counts by
+        valid_ca_y (str): Name of column attribute to restrict counts by
+        ra_y (str): Name of row attribute to restrict counts by
+        batch_x (int): Chunk size for batches
+        batch_y (int): Chunk size for batches
+        remove_version (bool): If true, remove gene version number
+        verbose (bool): Print logging messages
+    """
+    if verbose:
+        ih_log.info('Generating csls distance matrix {}'.format(avg_weight))
+        t0 = time.time()
+    layers_x = loom_utils.make_layer_list(observed_x)
+    col_x = loom_utils.get_attr_index(loom_file=loom_x,
+                                      attr=valid_ca_x,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_x = loom_utils.get_attr_index(loom_file=loom_x,
+                                      attr=ra_x,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    layers_y = loom_utils.make_layer_list(observed_y)
+    col_y = loom_utils.get_attr_index(loom_file=loom_y,
+                                      attr=valid_ca_y,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_y = loom_utils.get_attr_index(loom_file=loom_y,
+                                      attr=ra_y,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)                
+    
+    with loompy.connect(filename=loom_x) as ds_x:
+        with loompy.connect(filename=loom_y) as ds_y:
+            num_x = ds_x.shape[1]
+            num_y = ds_y.shape[1]
+            dist_x_ = general_utils.make_nan_array(num_rows=num_x,
+                                                   num_cols=max_k_x)
+            idx_x_ = general_utils.make_nan_array(num_rows=num_x,
+                                                  num_cols=max_k_x)
+            dist_y_ = general_utils.make_nan_array(num_rows=num_y,
+                                                   num_cols=max_k_y)
+            idx_y_ = general_utils.make_nan_array(num_rows=num_y,
+                                                  num_cols=max_k_y)
+            x_feat = ds_x.ra[feature_id_x][row_x]
+            y_feat = ds_y.ra[feature_id_y][row_y]
+            if remove_version:
+                x_feat = general_utils.remove_gene_version(x_feat)
+                y_feat = general_utils.remove_gene_version(y_feat)
+             
+    # Loop and make correlations
+    with loompy.connect(filename=loom_x, mode='r') as ds_x:
+        for (_, sel_x, dat_x) in ds_x.scan(axis=1,
+                                           items=col_x,
+                                           layers=layers_x,
+                                           batch_size=batch_x):
+            # Get data
+            r_x = np.array(dat_x.ca[dist_x][:, :check_k]).mean(axis=1)
+
+            dat_x = dat_x.layers[observed_x][row_x, :].T
+            
+            if metric == "correlation": 
+                dat_x = pd.DataFrame(dat_x).rank(pct=True,
+                                                 method='first',
+                                                 axis=1).values
+                if direction == '+' or direction == 'positive':
+                    pass
+                elif direction == '-' or direction == 'negative':
+                    dat_x = 1 - dat_x
+                else:
+                    raise ValueError('Unsupported direction value')
+            else: 
+                dat_x = (dat_x - dat_x.mean()) / dat_x.std()
+
+                if direction == '+' or direction == 'positive':
+                    pass
+                elif direction == '-' or direction == 'negative':
+                    dat_x = -1 * dat_x
+                else:
+                    err_msg = 'Unsupported direction value ({})'.format(direction)
+                    ih_log.error(err_msg)
+                    raise ValueError(err_msg)
+            with loompy.connect(filename=loom_y, mode='r') as ds_y:
+                for (_, sel_y, dat_y) in ds_y.scan(axis=1,
+                                                   items=col_y,
+                                                   layers=layers_y,
+                                                   batch_size=batch_y):
+                    
+                    r_y = np.array(dat_y.ca[dist_y][:, :check_k]).mean(axis=1)
+                    dat_y = dat_y.layers[observed_y][row_y, :].T
+                    dat_y = pd.DataFrame((dat_y - dat_y.mean()) / dat_y.std())
+                    dat_y.columns = y_feat
+                    dat_y = dat_y.loc[:, x_feat]
+                    
+                    if dat_y.isnull().any().any():
+                        err_msg = 'Feature mismatch for correlations'
+                        if verbose:
+                            ih_log.error(err_msg)
+                        raise ValueError(err_msg)
+                    dat_y = dat_y.values
+                    if metric == "correlation":
+                        coeff = generate_coefficients(dat_x,
+                                                      dat_y)
+                    else:
+                        coeff = get_normalized_dist(dat_x,
+                                                dat_y,
+                                                metric=metric)
+                    
+                    coeff = csls_dist(distances = coeff.values,
+                                      r_x = r_x,
+                                      r_y = r_y,
+                                      avg_weight = avg_weight)
+                    
+                    dist_x_, idx_x_ = update_markov_values(coeff=pd.DataFrame(coeff),
+                                                           self_index=sel_x,
+                                                           other_index=sel_y,
+                                                           k=max_k_x,
+                                                           dist_vals=dist_x_,
+                                                           idx_vals=idx_x_)
+                    dist_y_, idx_y_ = update_markov_values(coeff=pd.DataFrame(coeff.T),
+                                                           self_index=sel_y,
+                                                           other_index=sel_x,
+                                                           k=max_k_y,
+                                                           dist_vals=dist_y_,
+                                                           idx_vals=idx_y_)
+
+                    del coeff
+                    gc.collect()
+    # Add data to files
+    with loompy.connect(filename=loom_x) as ds:
+        ds.ca[dist_x] = dist_x_
+        ds.ca[idx_x] = idx_x_.astype(int)
+    with loompy.connect(filename=loom_y) as ds:
+        ds.ca[dist_y] = dist_y_
+        ds.ca[idx_y] = idx_y_.astype(int)
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        ih_log.info(
+            'Generated {0} distance in {1:.2f} {2}'.format(metric, time_run,
+                                                           time_fmt))
 def multimodal_adjacency(distance_arr,
                          neighbor_arr,
                          num_col,
