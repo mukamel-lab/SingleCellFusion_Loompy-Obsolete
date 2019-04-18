@@ -39,6 +39,9 @@ def prep_for_imputation(loom_x,
                         mutual_k_y_to_x='auto',
                         gen_var_x=True,
                         gen_var_y=True,
+                        csls = False,
+                        csls_weight = .1,
+                        csls_k = 20,
                         var_attr_x='highly_variable',
                         var_attr_y='highly_variable',
                         feature_id_x='Accession',
@@ -82,6 +85,11 @@ def prep_for_imputation(loom_x,
             auto will automatically determine a k value
         gen_var_x (bool): Find highly variable features for dataset x
         gen_var_y (bool): Find highly variable features for dataset y
+        csls (bool) : wether to find adjusted distance matrices using csls
+        csls_weight (float): a wighting factor which decides how much cells
+            benefit from having a large avergae distance used for csls 
+        csls_k = (int) : a number of nearest neighbors used to find average
+            cross modality distances used for csls
         var_attr_x (str): Attribute specifying highly variable features
         var_attr_y (str): Attribute specifying highly variable features
         feature_id_x (str): Attribute containing unique feature IDs
@@ -229,6 +237,36 @@ def prep_for_imputation(loom_x,
                               batch_y=batch_y,
                               remove_version=remove_id_version,
                               verbose=verbose)
+    
+    if csls:
+        mutual_k_x_to_y = mutual_k_x_to_y//2
+        mutual_k_y_to_x = mutual_k_y_to_x//2
+        
+    if csls:
+        ih.generate_csls_distance(loom_x=loom_x,
+                                  observed_x=observed_x,
+                                  dist_x=corr_dist_x,
+                                  idx_x=corr_idx_x,
+                                  max_k_x=max_k,
+                                  loom_y=loom_y,
+                                  observed_y=observed_y,
+                                  dist_y=corr_dist_y,
+                                  idx_y=corr_idx_y,
+                                  max_k_y=max_k,
+                                  direction=direction,
+                                  feature_id_x=feature_id_x,
+                                  feature_id_y=feature_id_y,
+                                  avg_weight = csls_weight,
+                                  check_k = csls_k,
+                                  metric=distance_metric,
+                                  valid_ca_x=valid_ca_x,
+                                  ra_x=common_attr,
+                                  valid_ca_y=valid_ca_y,
+                                  ra_y=common_attr,
+                                  batch_x=batch_x,
+                                  batch_y=batch_y,
+                                  remove_version=remove_id_version,
+                                  verbose=verbose)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
