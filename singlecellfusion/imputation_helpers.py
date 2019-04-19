@@ -238,7 +238,6 @@ def get_decile_variable(loom_file,
     my_mean = pd.Series(my_mean, index=feat_labels)
     feat_deciles = pd.qcut(my_mean,
                            q=10,
-                           duplicates='drop',
                            labels=False).to_frame('decile')
     hvf = []
     for decile, batch_info in feat_deciles.groupby('decile'):
