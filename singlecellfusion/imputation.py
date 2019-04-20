@@ -39,9 +39,9 @@ def prep_for_imputation(loom_x,
                         mutual_k_y_to_x='auto',
                         gen_var_x=True,
                         gen_var_y=True,
-                        csls = False,
-                        csls_weight = .1,
-                        csls_k = 20,
+                        csls=False,
+                        csls_weight=.1,
+                        csls_k=20,
                         var_attr_x='highly_variable',
                         var_attr_y='highly_variable',
                         feature_id_x='Accession',
@@ -85,10 +85,10 @@ def prep_for_imputation(loom_x,
             auto will automatically determine a k value
         gen_var_x (bool): Find highly variable features for dataset x
         gen_var_y (bool): Find highly variable features for dataset y
-        csls (bool) : wether to find adjusted distance matrices using csls
+        csls (bool) : whether to find adjusted distance matrices using csls
         csls_weight (float): a wighting factor which decides how much cells
-            benefit from having a large avergae distance used for csls 
-        csls_k = (int) : a number of nearest neighbors used to find average
+            benefit from having a large average distance used for csls
+        csls_k (int) : a number of nearest neighbors used to find average
             cross modality distances used for csls
         var_attr_x (str): Attribute specifying highly variable features
         var_attr_y (str): Attribute specifying highly variable features
@@ -237,11 +237,6 @@ def prep_for_imputation(loom_x,
                               batch_y=batch_y,
                               remove_version=remove_id_version,
                               verbose=verbose)
-    
-    if csls:
-        mutual_k_x_to_y = mutual_k_x_to_y//2
-        mutual_k_y_to_x = mutual_k_y_to_x//2
-        
     if csls:
         ih.generate_csls_distance(loom_x=loom_x,
                                   observed_x=observed_x,
@@ -256,8 +251,8 @@ def prep_for_imputation(loom_x,
                                   direction=direction,
                                   feature_id_x=feature_id_x,
                                   feature_id_y=feature_id_y,
-                                  avg_weight = csls_weight,
-                                  check_k = csls_k,
+                                  avg_weight=csls_weight,
+                                  check_k=csls_k,
                                   metric=distance_metric,
                                   valid_ca_x=valid_ca_x,
                                   ra_x=common_attr,
@@ -330,8 +325,8 @@ def impute_between_datasets(loom_x,
             mnn - only include cells that made MNNs
             knn - use a restricted knn search to find neighbors
         remove_id_version (bool): Remove GENCODE version from feature IDs
-        constraint_relaxation(float): used for knn impuation
-            a ratio determining the number of neigbors that can be 
+        constraint_relaxation(float): used for knn imputation
+            a ratio determining the number of neighbors that can be
             formed by cells in the other dataset. Increasing it means
             neighbors can be distributed more unevenly among cells, 
             one means each cell is used equally.
