@@ -57,13 +57,6 @@ def prep_for_imputation(loom_x,
                         remove_id_version=False,
                         find_common=True,
                         common_attr='common_variable',
-                        distance_metric="correlation",
-                        gen_corr=True,
-                        direction='positive',
-                        corr_dist_x='corr_distances',
-                        corr_dist_y='corr_distances',
-                        corr_idx_x='corr_indices',
-                        corr_idx_y='corr_indices',
                         valid_ca_x=None,
                         valid_ca_y=None,
                         valid_ra_x=None,
@@ -145,16 +138,6 @@ def prep_for_imputation(loom_x,
         imp_log.info('Preparing to impute between {0} and {1}'.format(loom_x,
                                                                       loom_y))
         t0 = time.time()
-    # Get values for k
-    if mutual_k_x_to_y == 'auto':
-        mutual_k_x_to_y = ih.auto_find_mutual_k(loom_file=loom_y,
-                                                valid_ca=valid_ca_y,
-                                                verbose=verbose)
-    if mutual_k_y_to_x == 'auto':
-        mutual_k_y_to_x = ih.auto_find_mutual_k(loom_file=loom_x,
-                                                valid_ca=valid_ca_x,
-                                                verbose=verbose)
-    max_k = np.max([mutual_k_x_to_y, mutual_k_y_to_x])
     # Find highly variable features
     if gen_var_x:
         if per_decile_x:
@@ -213,55 +196,6 @@ def prep_for_imputation(loom_x,
                                 valid_ra_y=var_attr_y,
                                 remove_version=remove_id_version,
                                 verbose=verbose)
-    # Generate correlations
-    if gen_corr:
-        ih.generate_distances(loom_x=loom_x,
-                              observed_x=observed_x,
-                              dist_x=corr_dist_x,
-                              idx_x=corr_idx_x,
-                              max_k_x=max_k,
-                              loom_y=loom_y,
-                              observed_y=observed_y,
-                              dist_y=corr_dist_y,
-                              idx_y=corr_idx_y,
-                              max_k_y=max_k,
-                              direction=direction,
-                              metric=distance_metric,
-                              feature_id_x=feature_id_x,
-                              feature_id_y=feature_id_y,
-                              valid_ca_x=valid_ca_x,
-                              ra_x=common_attr,
-                              valid_ca_y=valid_ca_y,
-                              ra_y=common_attr,
-                              batch_x=batch_x,
-                              batch_y=batch_y,
-                              remove_version=remove_id_version,
-                              verbose=verbose)
-    if csls:
-        ih.generate_csls_distance(loom_x=loom_x,
-                                  observed_x=observed_x,
-                                  dist_x=corr_dist_x,
-                                  idx_x=corr_idx_x,
-                                  max_k_x=max_k,
-                                  loom_y=loom_y,
-                                  observed_y=observed_y,
-                                  dist_y=corr_dist_y,
-                                  idx_y=corr_idx_y,
-                                  max_k_y=max_k,
-                                  direction=direction,
-                                  feature_id_x=feature_id_x,
-                                  feature_id_y=feature_id_y,
-                                  avg_weight=csls_weight,
-                                  check_k=csls_k,
-                                  metric=distance_metric,
-                                  valid_ca_x=valid_ca_x,
-                                  ra_x=common_attr,
-                                  valid_ca_y=valid_ca_y,
-                                  ra_y=common_attr,
-                                  batch_x=batch_x,
-                                  batch_y=batch_y,
-                                  remove_version=remove_id_version,
-                                  verbose=verbose)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
@@ -275,10 +209,12 @@ def impute_between_datasets(loom_x,
                             observed_y,
                             imputed_x,
                             imputed_y,
-                            mnn_index_x='corr_indices',
-                            mnn_index_y='corr_indices',
-                            mnn_distance_x='corr_distances',
-                            mnn_distance_y='corr_distances',
+                            common_attr="common_variable",
+                            correlation='positive',
+                            neighbor_index_x='corr_indices',
+                            neighbor_index_y='corr_indices',
+                            neighbor_distance_x='corr_distances',
+                            neighbor_distance_y='corr_distances',
                             neighbor_method="rescue",
                             remove_id_version=False,
                             constraint_relaxation=1.1,
@@ -302,6 +238,7 @@ def impute_between_datasets(loom_x,
                             batch_x=512,
                             batch_y=512,
                             offset=1e-5,
+                            remove_version=False,
                             verbose=False):
     """
     Imputes counts between dataset x and dataset y
@@ -312,13 +249,13 @@ def impute_between_datasets(loom_x,
         observed_y (str/list): Layer(s) containing observed count data
         imputed_x (str/list): Output layer(s) for imputed count data
         imputed_y (str/list): Output layer(s) for imputed count data
-        mnn_index_x (str): Attribute containing indices for MNNs
+        neighbor_index_x (str): Attribute containing indices for MNNs
             corr_idx_x in prep_for_imputation
-        mnn_index_y (str): Attribute containing indices for MNNs
+        neighbor_index_y (str): Attribute containing indices for MNNs
             corr_idx_y in prep_for_imputation
-        mnn_distance_x (str): Attribute containing distances for MNNs
+        neighbor_distance_x (str): Attribute containing distances for MNNs
             corr_dist_x in prep_for_imputation
-        mnn_distance_y (str): Attribute containing distances for MNNs
+        neighbor_distance_y (str): Attribute containing distances for MNNs
             corr_dist_y in prep_for imputation
         neighbor_method (str): How cells are chosen for imputation 
             rescue - include cells that did not make MNNs
@@ -388,6 +325,31 @@ def impute_between_datasets(loom_x,
             if verbose:
                 imp_log.error(err_msg)
             raise ValueError(err_msg)
+    max_k = np.max([mutual_k_x_to_y, mutual_k_y_to_x])
+    # Get distances
+    if neighbor_method in ['rescue', 'mnn']:
+        ih.get_mnn_distance_index(loom_x=loom_x,
+                                       observed_x=observed_x,
+                                       neighbor_distance_x=neighbor_distance_x,
+                                       neighbor_index_x=neighbor_index_x,
+                                       max_k_x=max_k,
+                                       loom_y=loom_y,
+                                       observed_y=observed_y,
+                                       neighbor_distance_y=neighbor_distance_x,
+                                       neighbor_index_y=neighbor_index_y,
+                                       max_k_y=max_k,
+                                       direction=correlation,
+                                       feature_id_x=feature_id_x,
+                                       feature_id_y=feature_id_y,
+                                       valid_ca_x=valid_ca_x,
+                                       ra_x=common_attr,
+                                       valid_ca_y=valid_ca_y,
+                                       ra_y=common_attr,
+                                       n_trees=10,
+                                       batch_x=batch_x,
+                                       batch_y=batch_y,
+                                       remove_version=remove_version,
+                                       verbose=verbose)
     # Impute data for loom_x
     ih.loop_impute_data(loom_source=loom_y,
                         layer_source=observed_y,
@@ -399,11 +361,10 @@ def impute_between_datasets(loom_x,
                         id_target=feature_id_x,
                         cell_target=valid_ca_x,
                         feat_target=valid_ra_x,
-                        mnn_distance_target=mnn_distance_x,
-                        mnn_distance_source=mnn_distance_y,
-                        mnn_index_target=mnn_index_x,
-                        mnn_index_source=mnn_index_y,
-
+                        neighbor_distance_target=neighbor_distance_x,
+                        neighbor_distance_source=neighbor_distance_y,
+                        neighbor_index_target=neighbor_index_x,
+                        neighbor_index_source=neighbor_index_y,
                         k_src_tar=mutual_k_y_to_x,
                         k_tar_src=mutual_k_x_to_y,
                         k_rescue=rescue_k_x,
@@ -429,10 +390,10 @@ def impute_between_datasets(loom_x,
                         id_target=feature_id_y,
                         cell_target=valid_ca_y,
                         feat_target=valid_ra_y,
-                        mnn_distance_target=mnn_distance_y,
-                        mnn_distance_source=mnn_distance_x,
-                        mnn_index_target=mnn_index_y,
-                        mnn_index_source=mnn_index_x,
+                        neighbor_distance_target=neighbor_distance_y,
+                        neighbor_distance_source=neighbor_distance_x,
+                        neighbor_index_target=neighbor_index_y,
+                        neighbor_index_source=neighbor_index_x,
 
                         k_src_tar=mutual_k_x_to_y,
                         k_tar_src=mutual_k_y_to_x,

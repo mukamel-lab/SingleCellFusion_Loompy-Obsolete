@@ -26,11 +26,13 @@ import numpy as np
 import pandas as pd
 import time
 from scipy import sparse
+from scipy.stats import zscore
 from sklearn.metrics import pairwise_distances
 import functools
 import logging
 import gc
 from numba import jit
+from annoy import AnnoyIndex
 from . import general_utils
 from . import loom_utils
 
@@ -971,11 +973,10 @@ def generate_correlations(loom_x,
 
 
 @jit
-def csls_dist(distances, 
+def csls_dist(distances,
               r_x,
               r_y,
-              avg_weight = .1):
-
+              avg_weight=.1):
     """
     finds adjusted csls distances
 
@@ -989,14 +990,14 @@ def csls_dist(distances,
 
     """
     csls_distances = 2 * distances
-    
+
     for pair in zip(np.arange(distances.shape[0]), np.arange(distances.shape[1])):
-        csls_distances[pair[0], pair[1]] = csls_distances[pair[0], pair[1]]\
-                                        - avg_weight * (r_x[pair[0]] + r_y[pair[1]])
+        csls_distances[pair[0], pair[1]] = csls_distances[pair[0], pair[1]] \
+                                           - avg_weight * (r_x[pair[0]] + r_y[pair[1]])
 
     return csls_distances
-    
-    
+
+
 def generate_csls_distance(loom_x,
                            observed_x,
                            dist_x,
@@ -1010,8 +1011,8 @@ def generate_csls_distance(loom_x,
                            direction,
                            feature_id_x,
                            feature_id_y,
-                           check_k = 20,
-                           avg_weight = .1,
+                           check_k=20,
+                           avg_weight=.1,
                            metric="correlation",
                            valid_ca_x=None,
                            ra_x=None,
@@ -1078,8 +1079,8 @@ def generate_csls_distance(loom_x,
                                       attr=ra_y,
                                       columns=False,
                                       as_bool=True,
-                                      inverse=False)                
-    
+                                      inverse=False)
+
     with loompy.connect(filename=loom_x) as ds_x:
         with loompy.connect(filename=loom_y) as ds_y:
             num_x = ds_x.shape[1]
@@ -1097,7 +1098,7 @@ def generate_csls_distance(loom_x,
             if remove_version:
                 x_feat = general_utils.remove_gene_version(x_feat)
                 y_feat = general_utils.remove_gene_version(y_feat)
-             
+
     # Loop and make correlations
     with loompy.connect(filename=loom_x, mode='r') as ds_x:
         for (_, sel_x, dat_x) in ds_x.scan(axis=1,
@@ -1108,8 +1109,8 @@ def generate_csls_distance(loom_x,
             r_x = np.array(dat_x.ca[dist_x][:, :check_k]).mean(axis=1)
 
             dat_x = dat_x.layers[observed_x][row_x, :].T
-            
-            if metric == "correlation": 
+
+            if metric == "correlation":
                 dat_x = pd.DataFrame(dat_x).rank(pct=True,
                                                  method='first',
                                                  axis=1).values
@@ -1119,7 +1120,7 @@ def generate_csls_distance(loom_x,
                     dat_x = 1 - dat_x
                 else:
                     raise ValueError('Unsupported direction value')
-            else: 
+            else:
                 dat_x = (dat_x - dat_x.mean()) / dat_x.std()
 
                 if direction == '+' or direction == 'positive':
@@ -1135,13 +1136,13 @@ def generate_csls_distance(loom_x,
                                                    items=col_y,
                                                    layers=layers_y,
                                                    batch_size=batch_y):
-                    
+
                     r_y = np.array(dat_y.ca[dist_y][:, :check_k]).mean(axis=1)
                     dat_y = dat_y.layers[observed_y][row_y, :].T
                     dat_y = pd.DataFrame((dat_y - dat_y.mean()) / dat_y.std())
                     dat_y.columns = y_feat
                     dat_y = dat_y.loc[:, x_feat]
-                    
+
                     if dat_y.isnull().any().any():
                         err_msg = 'Feature mismatch for correlations'
                         if verbose:
@@ -1153,14 +1154,14 @@ def generate_csls_distance(loom_x,
                                                       dat_y)
                     else:
                         coeff = get_normalized_dist(dat_x,
-                                                dat_y,
-                                                metric=metric)
-                    
-                    coeff = csls_dist(distances = coeff.values,
-                                      r_x = r_x,
-                                      r_y = r_y,
-                                      avg_weight = avg_weight)
-                    
+                                                    dat_y,
+                                                    metric=metric)
+
+                    coeff = csls_dist(distances=coeff.values,
+                                      r_x=r_x,
+                                      r_y=r_y,
+                                      avg_weight=avg_weight)
+
                     dist_x_, idx_x_ = update_markov_values(coeff=pd.DataFrame(coeff),
                                                            self_index=sel_x,
                                                            other_index=sel_y,
@@ -1189,39 +1190,6 @@ def generate_csls_distance(loom_x,
         ih_log.info(
             'Generated {0} distance in {1:.2f} {2}'.format(metric, time_run,
                                                            time_fmt))
-def multimodal_adjacency(distance_arr,
-                         neighbor_arr,
-                         num_col,
-                         new_k=None):
-    """
-    Generates a sparse adjacency matrix from specified distances and neighbors
-    Optionally, restricts to a new k nearest neighbors
-
-    Args:
-        distance_arr (ndarray): Distances between elements
-        neighbor_arr (ndarray): Index of neighbors
-        num_col (int): Number of output column in adjacency matrix
-        new_k (int): Optional, restrict to this k
-
-    Returns 
-        A (sparse matrix): Adjacency matrix
-    """
-    if new_k is None:
-        new_k = distance_arr.shape[1]
-    if distance_arr.shape[1] != neighbor_arr.shape[1]:
-        raise ValueError('Neighbors and distances must have same k!')
-    if distance_arr.shape[1] < new_k:
-        raise ValueError('new_k must be less than the current k')
-    tmp = pd.DataFrame(distance_arr)
-    new_k = int(new_k)
-    knn = ((-tmp).rank(axis=1, method='first') <= new_k).values.astype(bool)
-    if np.unique(np.sum(knn, axis=1)).shape[0] != 1:
-        raise ValueError('k is inappropriate for data')
-    a = sparse.csr_matrix(
-        (np.ones((int(neighbor_arr.shape[0] * new_k),), dtype=int),
-         (np.where(knn)[0], neighbor_arr[knn])),
-        (neighbor_arr.shape[0], num_col))
-    return a
 
 
 @jit
@@ -1303,23 +1271,14 @@ def gen_impute_adj(loom_file,
         adj (sparse matrix): Adjacency matrix with k nearest 
                              neighbors of self in other.
     """
-    adj = []
     num_other = other_idx.shape[0]
     num_self = self_idx.shape[0]
-    with loompy.connect(filename=loom_file, mode='r') as ds:
-        if num_self != ds.shape[1]:
-            raise ValueError('Index does not match dimensions')
-        for (_, selection, view) in ds.scan(axis=1,
-                                            layers=[''],
-                                            items=self_idx,
-                                            batch_size=batch_size):
-            adj.append(multimodal_adjacency(distance_arr=view.ca[distance_attr],
-                                            neighbor_arr=view.ca[neighbor_attr],
-                                            num_col=num_other,
-                                            new_k=k))
-    # Make matrices
-    adj = sparse.vstack(adj)
-    adj = adj.tocsc()[:, other_idx].tocsr()
+    row_inds = np.repeat(np.arange(num_self), k)
+    with loompy.connect(loom_file) as ds:
+        col_inds = np.ravel(ds.ca[neighbor_attr][:,np.arange(k)])
+    data = [1]*len(row_inds)
+    adj = sparse.coo_matrix((data, (row_inds, col_inds)), 
+                            shape=(num_self, num_other))
     return adj
 
 
@@ -1494,16 +1453,326 @@ def get_markov_impute(loom_target,
                                  k_src_tar))
     return w_impute
 
+def get_knn_dist_and_idx(t,
+                         mat_test,
+                         k,
+                         search_k=-1,
+                         include_distances=False,
+                         verbose=False):
+    # Check data
+    train_obs = t.get_n_items()
+    train_f = t.f
+    test_obs, test_f = mat_test.shape
+    if train_f != test_f:
+        raise ValueError('mat_test and mat_train dimensions are not identical')
+    if k > train_obs:
+        if verbose:
+            ih_log.info('Changing k to reflect observations (k now equals {})'.format(train_obs))
+        k = train_obs
+    # Set-up for output
+    knn_idx = [0] * (test_obs)
+    knn_dist = [0] * (test_obs)
+    if include_distances:
+        for i, vector in enumerate(mat_test):
+            res = t.get_nns_by_vector(vector,
+                                      k,
+                                      search_k=search_k,
+                                      include_distances=include_distances)
+            knn_idx[i] = res[0]
+            knn_dist[i] = res[1]
+    else:
+        for i, vector in enumerate(mat_test):
+            res = t.get_nns_by_vector(vector,
+                                      k,
+                                      search_k=search_k,
+                                      include_distances=include_distances)
+            knn_idx[i] = res
 
-def gaussian_markov(loom_target,
-                    valid_target,
-                    mnns,
-                    k,
-                    ka,
-                    epsilon,
-                    pca_attr,
-                    metric,
-                    batch_size):
+    knn_idx = np.array(knn_idx)
+    knn_dist = np.array(knn_dist)
+    if include_distances:
+        return knn_dist, knn_idx.astype(int)
+    else:
+        return knn_idx.astype(int)
+
+
+def prep_knn_object(num_dim,
+                    metric='euclidean'):
+    t = AnnoyIndex(num_dim,
+                   metric=metric)
+    t.set_seed(23)
+    return t
+
+
+def add_mat_to_knn(mat,
+                   t,
+                   start_idx=0):
+    for i, val in enumerate(mat):
+        new_idx = i + start_idx
+        t.add_item(new_idx, val)
+    return t, new_idx
+
+
+def build_knn(t,
+              n_trees=10):
+    t.build(n_trees)
+    return t
+
+
+def low_mem_distance_index(mat_train,
+                           mat_test,
+                           k,
+                           metric='euclidean',
+                           n_trees=10,
+                           search_k=-1,
+                           include_distances=True,
+                           verbose=False):
+    # Get dimensions
+    train_f = mat_train.shape[1]
+    test_f = mat_test.shape[1]
+    if train_f != test_f:
+        raise ValueError('mat_train and mat_test dimensions are not identical')
+    # Build kNN
+    t = prep_knn_object(num_dim=train_f,
+                        metric=metric)
+    t,_x = add_mat_to_knn(mat=mat_train,
+                          t=t)
+    t = build_knn(t=t,
+                  n_trees=n_trees)
+    # Get distances and indices
+    knn_dist, knn_idx = get_knn_dist_and_idx(t=t,
+                                             mat_test=mat_test,
+                                             k=k,
+                                             search_k=-1,
+                                             include_distances=include_distances,
+                                             verbose=verbose)
+    return knn_dist, knn_idx
+
+def train_knn(loom_file,
+              layer,
+              row_arr,
+              col_arr,
+              feat_attr,
+              feat_select,
+              reverse_rank,
+              batch_size):
+    # Prepare kNN object
+    t = prep_knn_object(num_dim=feat_select.shape[0],
+                        metric='dot')
+    current_idx = 0
+    # Get layers
+    layers = loom_utils.make_layer_list(layer)
+    # Train kNN object
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        for (_, selection, view) in ds.scan(axis=1,
+                                              items=col_arr,
+                                              layers=layers,
+                                              batch_size=batch_size):
+            # Get data
+            dat = pd.DataFrame(view.layers[layer][row_arr, :].T,
+                               columns = view.ra[feat_attr][row_arr])
+            dat = dat.loc[:,feat_select]
+            dat = pd.DataFrame(dat).rank(pct=True,axis=1).apply(zscore,
+                                                                axis=1,
+                                                                result_type='expand').values
+            if reverse_rank:
+                dat = -1 * dat
+            # Add to kNN
+            t, current_idx = add_mat_to_knn(mat=dat,
+                                            t = t,
+                                            start_idx = current_idx)
+            current_idx += 1
+    # Return kNN
+    return t
+
+def report_knn(loom_file,
+               layer,
+               row_arr,
+               col_arr,
+               feat_attr,
+               feat_select,
+               reverse_rank,
+               k,
+               t,
+               batch_size,
+               verbose):
+    # Make distance and index arrays
+    with loompy.connect(loom_file) as ds:
+        num_cells = ds.shape[1]
+    dist = general_utils.make_nan_array(num_rows=num_cells,
+                                          num_cols=k)
+    idx = general_utils.make_nan_array(num_rows=num_cells,
+                                       num_cols=k)
+    # Get layers
+    layers = loom_utils.make_layer_list(layer)
+    # Get results of kNN object
+    with loompy.connect(filename=loom_file, mode='r') as ds:
+        for (_, selection, view) in ds.scan(axis=1,
+                                              items=col_arr,
+                                              layers=layers,
+                                              batch_size=batch_size):
+            # Get data
+            dat = pd.DataFrame(view.layers[layer][row_arr, :].T,
+                               columns = view.ra[feat_attr][row_arr])
+            dat = dat.loc[:,feat_select]
+            dat = pd.DataFrame(dat).rank(pct=True,axis=1).apply(zscore,
+                                                                axis=1,
+                                                                result_type='expand').values
+            if reverse_rank:
+                dat = -1 * dat
+            # Get distances and indices
+            tmp_dist, tmp_idx = get_knn_dist_and_idx(t=t,
+                                                     mat_test=dat,
+                                                     k=k,
+                                                     search_k=-1,
+                                                     include_distances=True,
+                                                     verbose=verbose)
+            dist[selection,:] = tmp_dist
+            idx[selection,:] = tmp_idx
+    # Return values
+    return dist,idx
+
+def get_mnn_distance_index(loom_x,
+                          observed_x,
+                          neighbor_distance_x,
+                          neighbor_index_x,
+                          max_k_x,
+                          loom_y,
+                          observed_y,
+                          neighbor_distance_y,
+                          neighbor_index_y,
+                          max_k_y,
+                          direction,
+                          feature_id_x,
+                          feature_id_y,
+                          valid_ca_x=None,
+                          ra_x=None,
+                          valid_ca_y=None,
+                          ra_y=None,
+                           n_trees=10,
+                          batch_x=512,
+                          batch_y=512,
+                          remove_version=False,
+                          verbose=False):
+    # Prep for function
+    if verbose:
+        ih_log.info('Finding kNN distances and indices')
+        t0 = time.time()
+    # Prep for kNN
+    col_x = loom_utils.get_attr_index(loom_file=loom_x,
+                                      attr=valid_ca_x,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_x = loom_utils.get_attr_index(loom_file=loom_x,
+                                      attr=ra_x,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    col_y = loom_utils.get_attr_index(loom_file=loom_y,
+                                      attr=valid_ca_y,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_y = loom_utils.get_attr_index(loom_file=loom_y,
+                                      attr=ra_y,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    # Make lookup
+    lookup_x = pd.Series(np.where(col_x)[0],
+                         index = np.arange(np.sum(col_x)))
+    lookup_y = pd.Series(np.where(col_y)[0],
+                         index=np.arange(np.sum(col_y)))
+
+    # Get features
+    with loompy.connect(filename=loom_x) as ds_x:
+         x_feat = ds_x.ra[feature_id_x][row_x]
+    with loompy.connect(filename=loom_y) as ds_y:
+        y_feat = ds_y.ra[feature_id_y][row_y]
+    if remove_version:
+        x_feat = general_utils.remove_gene_version(x_feat)
+        y_feat = general_utils.remove_gene_version(y_feat)
+    if np.any(np.sort(x_feat) != np.sort(y_feat)):
+        raise ValueError('Feature mismatch!')
+    # Train kNNs
+    reverse_y = False 
+    if direction == '+' or direction == 'positive':
+        reverse_x = False
+    elif direction == '-' or direction == 'negative':
+        reverse_x = True 
+    else:
+        raise ValueError('Unsupported direction value')
+    t_y2x = train_knn(loom_file=loom_x,
+                      layer=observed_x,
+                      row_arr=row_x,
+                      col_arr=col_x,
+                      feat_attr=feature_id_x,
+                      feat_select=x_feat,
+                      reverse_rank = reverse_x,
+                      batch_size=batch_x)
+    t_x2y = train_knn(loom_file=loom_y,
+                      layer=observed_y,
+                      row_arr=row_y,
+                      col_arr=col_y,
+                      feat_attr=feature_id_y,
+                      feat_select=x_feat,
+                      reverse_rank = reverse_y,
+                      batch_size=batch_y)            
+    # Build trees
+    t_x2y = build_knn(t=t_x2y,
+                     n_trees=n_trees)
+    t_y2x = build_knn(t=t_y2x,
+                     n_trees=n_trees)
+    # Get distances and indices
+    dist_x,idx_x = report_knn(loom_file=loom_x,
+                              layer=observed_x,
+                              row_arr=row_x,
+                              col_arr=col_x,
+                              feat_attr=feature_id_x,
+                              feat_select=x_feat,
+                              reverse_rank=reverse_x,
+                              k=max_k_x,
+                              t=t_x2y,
+                              batch_size=batch_x,
+                              verbose=verbose)
+    dist_y,idx_y = report_knn(loom_file=loom_y,
+                              layer=observed_y,
+                              row_arr=row_y,
+                              col_arr=col_y,
+                              feat_attr=feature_id_y,
+                              feat_select=x_feat,
+                              reverse_rank=reverse_y,
+                              k=max_k_y,
+                              t=t_y2x,
+                              batch_size=batch_y,
+                              verbose=verbose)
+    # Get correct indices
+    correct_idx_x = np.reshape(lookup_y.loc[np.ravel(idx_x).astype(int)].values,
+                               idx_x.shape)
+    correct_idx_y = np.reshape(lookup_x.loc[np.ravel(idx_y).astype(int)].values,
+                               idx_y.shape)
+    # Add data to files
+    with loompy.connect(filename=loom_x) as ds:
+        ds.ca[neighbor_distance_x] = dist_x
+        ds.ca[neighbor_index_x] = correct_idx_x
+    with loompy.connect(filename=loom_y) as ds:
+        ds.ca[neighbor_distance_y] = dist_y
+        ds.ca[neighbor_index_y] = correct_idx_y
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        ih_log.info(
+            'Found neighbors in {0:.2f} {1}'.format(time_run, time_fmt))
+
+def rescue_markov(loom_target,
+                  valid_target,
+                  mnns,
+                  k,
+                  ka,
+                  epsilon,
+                  pca_attr,
+                  verbose=False):
     """
     Generates Markov for rescuing cells
 
@@ -1519,7 +1788,6 @@ def gaussian_markov(loom_target,
             euclidean
             manhattan
             cosine
-        batch_size (int): Size of batches
 
     Returns:
         w (sparse matrix): Markov matrix for within-modality rescue
@@ -1538,50 +1806,39 @@ def gaussian_markov(loom_target,
     Marioni. It was published in Nature Biotechnology and the DOI is
     https://doi.org/10.1038/nbt.4091.
     """
-    # Get neighbors and distances
+    # Get neighbors and distance
     cidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=valid_target,
                                          columns=True,
                                          as_bool=False,
                                          inverse=False)
     tot_n = cidx_tar.shape[0]
-    distances = []
-    indices = []
+    # Get PCs
     with loompy.connect(loom_target) as ds:
-        mnn_pcs = ds.ca[pca_attr][cidx_tar, :][mnns, :]
-        for (_, selection, view) in ds.scan(items=cidx_tar,
-                                            layers=[''],
-                                            axis=1,
-                                            batch_size=batch_size):
-            tmp = pairwise_distances(X=view.ca[pca_attr],
-                                     Y=mnn_pcs,
-                                     metric=metric)
-            knn = (pd.DataFrame(tmp).rank(axis=1, method='first') <= k)
-            if np.unique(np.sum(knn, axis=1)).shape[0] != 1:
-                raise ValueError('k is inappropriate for data')
-            tmp_neighbor = np.reshape(mnns[np.where(knn)[1]],
-                                      (selection.shape[0], k))
-            tmp_distance = np.reshape(tmp[knn],
-                                      (selection.shape[0], k))
-            distances.append(tmp_distance)
-            indices.append(tmp_neighbor)
-    distances = np.vstack(distances)
-    indices = np.vstack(indices)
+        all_pcs = ds.ca[pca_attr][cidx_tar, :]
+    mnn_pcs = all_pcs[mnns, :]
+    # Get within-modality MNN
+    distances, indices = low_mem_distance_index(mat_train=mnn_pcs,
+                                                mat_test=all_pcs,
+                                                k=k,
+                                                metric='euclidean',
+                                                n_trees=10,
+                                                search_k=-1,
+                                                verbose=verbose,
+                                                include_distances=True)
     if ka > 0:
         distances = distances / (np.sort(distances,
                                          axis=1)[:, ka].reshape(-1, 1))
     # Calculate gaussian kernel
-    adjs = np.exp(-((distances ** 2) / (epsilon ** 2)))
+    adjs = np.exp(-((distances ** 2) / (2*(epsilon ** 2))))
     # Construct W
     rows = np.repeat(np.arange(tot_n), k)
-    cols = np.ravel(indices)
+    cols = mnns[np.ravel(indices)]
     vals = np.ravel(adjs)
     w = sparse.csr_matrix((vals, (rows, cols)), shape=(tot_n, tot_n))
-    # Symmetrize W
-    w = w + w.T
-    # Normalize W
-    divisor = np.ravel(np.repeat(w.sum(axis=1), w.getnnz(axis=1)))
-    w.data /= divisor
+    # Normalize
+    row_sum = np.ravel(w.sum(axis=1))
+    w = sparse.diags(1.0/(row_sum)).dot(w)
     return w
 
 
@@ -1651,15 +1908,15 @@ def all_markov_self(loom_target,
                                  verbose=verbose)
     mnns = np.unique(w_impute.nonzero()[0])
     # Get w_self
-    w_self = gaussian_markov(loom_target=loom_target,
-                             valid_target=valid_target,
-                             mnns=mnns,
-                             k=k_rescue,
-                             ka=ka,
-                             epsilon=epsilon,
-                             pca_attr=pca_attr,
-                             metric=metric,
-                             batch_size=batch_target)
+    w_self = rescue_markov(loom_target=loom_target,
+                           valid_target=valid_target,
+                           mnns=mnns,
+                           k=k_rescue,
+                           ka=ka,
+                           epsilon=epsilon,
+                           pca_attr=pca_attr,
+                           metric=metric,
+                           verbose=verbose)
     w_use = w_self.dot(w_impute)
     return w_use
 
@@ -1674,10 +1931,10 @@ def impute_data(loom_source,
                 id_target,
                 cell_target,
                 feat_target,
-                mnn_distance_target,
-                mnn_distance_source,
-                mnn_index_target,
-                mnn_index_source,
+                neighbor_distance_target,
+                neighbor_distance_source,
+                neighbor_index_target,
+                neighbor_index_source,
                 k_src_tar,
                 k_tar_src,
                 k_rescue,
@@ -1707,10 +1964,10 @@ def impute_data(loom_source,
         id_target (str): Row attribute specifying unique feature IDs
         cell_target (str): Column attribute specifying columns to include
         feat_target (str): Row attribute specifying rows to include
-        mnn_distance_target (str): Attribute containing distances for MNNs
-        mnn_distance_source (str): Attribute containing distances for MNNs
-        mnn_index_target (str): Attribute containing indices for MNNs
-        mnn_index_source (str): Attribute containing indices for MNNs
+        neighbor_distance_target (str): Attribute containing distances for MNNs
+        neighbor_distance_source (str): Attribute containing distances for MNNs
+        neighbor_index_target (str): Attribute containing indices for MNNs
+        neighbor_index_source (str): Attribute containing indices for MNNs
         k_src_tar (int): Number of nearest neighbors for MNNs
         k_tar_src (int): Number of nearest neighbors for MNNs
         k_rescue (int): Number of nearest neighbors for rescue
@@ -1797,10 +2054,10 @@ def impute_data(loom_source,
                                 valid_target=cell_target,
                                 loom_source=loom_source,
                                 valid_source=cell_source,
-                                neighbor_target=mnn_index_target,
-                                neighbor_source=mnn_index_source,
-                                distance_target=mnn_distance_target,
-                                distance_source=mnn_distance_source,
+                                neighbor_target=neighbor_index_target,
+                                neighbor_source=neighbor_index_source,
+                                distance_target=neighbor_distance_target,
+                                distance_source=neighbor_distance_source,
                                 k_src_tar=k_src_tar,
                                 k_tar_src=k_tar_src,
                                 k_rescue=k_rescue,
@@ -1817,10 +2074,10 @@ def impute_data(loom_source,
                                   loom_source=loom_source,
                                   valid_target=cell_target,
                                   valid_source=cell_source,
-                                  neighbor_target=mnn_index_target,
-                                  neighbor_source=mnn_index_source,
-                                  distance_target=mnn_distance_target,
-                                  distance_source=mnn_distance_source,
+                                  neighbor_target=neighbor_index_target,
+                                  neighbor_source=neighbor_index_source,
+                                  distance_target=neighbor_distance_target,
+                                  distance_source=neighbor_distance_source,
                                   k_src_tar=k_src_tar,
                                   k_tar_src=k_tar_src,
                                   offset=offset,
@@ -1830,8 +2087,8 @@ def impute_data(loom_source,
     elif neighbor_method == "knn":
         w_use = gen_impute_knn(loom_target=loom_target,
                                loom_source=loom_source,
-                               neighbor_attr=mnn_index_target,
-                               distance_attr=mnn_distance_target,
+                               neighbor_attr=neighbor_index_target,
+                               distance_attr=neighbor_distance_target,
                                valid_target=cell_target,
                                valid_source=cell_source,
                                k=10,
@@ -1892,10 +2149,10 @@ def loop_impute_data(loom_source,
                      id_target,
                      cell_target,
                      feat_target,
-                     mnn_distance_target,
-                     mnn_distance_source,
-                     mnn_index_target,
-                     mnn_index_source,
+                     neighbor_distance_target,
+                     neighbor_distance_source,
+                     neighbor_index_target,
+                     neighbor_index_source,
                      k_src_tar,
                      k_tar_src,
                      k_rescue,
@@ -1924,13 +2181,13 @@ def loop_impute_data(loom_source,
         id_target (str): Row attribute specifying unique feature IDs
         cell_target (str): Column attribute specifying columns to include
         feat_target (str): Row attribute specifying rows to include
-        mnn_distance_target (str): Attribute containing distances for MNNs
+        neighbor_distance_target (str): Attribute containing distances for MNNs
             corr_dist from prep_imputation
-        mnn_distance_source (str): Attribute containing distances for MNNs
+        neighbor_distance_source (str): Attribute containing distances for MNNs
             corr_dist from prep_imputation
-        mnn_index_target (str): Attribute containing indices for MNNs
+        neighbor_index_target (str): Attribute containing indices for MNNs
             corr_idx from prep_imputation
-        mnn_index_source (str): Attribute containing indices for MNNs
+        neighbor_index_source (str): Attribute containing indices for MNNs
             corr_idx from prep_imputation
         k_src_tar (int): Number of mutual nearest neighbors
         k_tar_src (int): Number of mutual nearest neighbors
@@ -1974,10 +2231,10 @@ def loop_impute_data(loom_source,
                         id_target=id_target,
                         cell_target=cell_target,
                         feat_target=feat_target,
-                        mnn_distance_target=mnn_distance_target,
-                        mnn_distance_source=mnn_distance_source,
-                        mnn_index_target=mnn_index_target,
-                        mnn_index_source=mnn_index_source,
+                        neighbor_distance_target=neighbor_distance_target,
+                        neighbor_distance_source=neighbor_distance_source,
+                        neighbor_index_target=neighbor_index_target,
+                        neighbor_index_source=neighbor_index_source,
                         k_src_tar=k_src_tar,
                         k_tar_src=k_tar_src,
                         k_rescue=k_rescue,
@@ -2004,10 +2261,10 @@ def loop_impute_data(loom_source,
                     id_target=id_target,
                     cell_target=cell_target,
                     feat_target=feat_target,
-                    mnn_distance_target=mnn_distance_target,
-                    mnn_distance_source=mnn_distance_source,
-                    mnn_index_target=mnn_index_target,
-                    mnn_index_source=mnn_index_source,
+                    neighbor_distance_target=neighbor_distance_target,
+                    neighbor_distance_source=neighbor_distance_source,
+                    neighbor_index_target=neighbor_index_target,
+                    neighbor_index_source=neighbor_index_source,
                     k_src_tar=k_src_tar,
                     k_tar_src=k_tar_src,
                     k_rescue=k_rescue,
