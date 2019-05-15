@@ -169,8 +169,8 @@ def get_mouse_chroms(prefix=False,
 def expand_sparse(mtx,
                   col_index=None,
                   row_index=None,
-                  col_N=None,
-                  row_N=None,
+                  col_n=None,
+                  row_n=None,
                   dtype=float):
     """
     Expands a sparse matrix
@@ -179,8 +179,8 @@ def expand_sparse(mtx,
         mtx (sparse 2D array): Matrix from a subset of loom file
         col_index (1D array): Numerical indices of columns included in mtx
         row_index (1D array): Numerical indices of rows included in mtx
-        col_N (int): Number of loom file columns
-        row_N (int): Number of loom file rows
+        col_n (int): Number of loom file columns
+        row_n (int): Number of loom file rows
         dtype (str): Type of data in output matrix
     
     Returns:
@@ -192,27 +192,27 @@ def expand_sparse(mtx,
     mtx = mtx.tocoo()
     if col_index is None and row_index is None:
         pass
-    elif col_index is not None and col_N is None:
-        raise ValueError('Must provide both col_index and col_N')
-    elif row_index is not None and row_N is None:
-        raise ValueError('Must provide both row_index and row_N')
+    elif col_index is not None and col_n is None:
+        raise ValueError('Must provide both col_index and col_n')
+    elif row_index is not None and row_n is None:
+        raise ValueError('Must provide both row_index and row_n')
     elif col_index is None:
         mtx = sparse.coo_matrix((mtx.data,
                                  (row_index[mtx.nonzero()[0]],
                                   mtx.nonzero()[1])),
-                                shape=(row_N, mtx.shape[1]),
+                                shape=(row_n, mtx.shape[1]),
                                 dtype=dtype)
     elif row_index is None:
         mtx = sparse.coo_matrix((mtx.data,
                                  (mtx.nonzero()[0],
                                   col_index[mtx.nonzero()[1]])),
-                                shape=(mtx.shape[0], col_N),
+                                shape=(mtx.shape[0], col_n),
                                 dtype=dtype)
     else:
         mtx = sparse.coo_matrix((mtx.data,
                                  (row_index[mtx.nonzero()[0]],
                                   col_index[mtx.nonzero()[1]])),
-                                shape=(row_N, col_N),
+                                shape=(row_n, col_n),
                                 dtype=dtype)
     return mtx
 
@@ -236,6 +236,16 @@ def remove_gene_version(gene_ids):
 
 
 def make_nan_array(num_rows, num_cols):
+    """
+    Makes an array of NaN values
+
+    Args:
+        num_rows (int): Number of rows for output array
+        num_cols (int): Number of columns for output array
+
+    Returns:
+        nan_array (ndarray): Array of NaN values
+    """
     nan_array = np.empty((num_rows, num_cols))
     nan_array.fill(np.nan)
     return nan_array

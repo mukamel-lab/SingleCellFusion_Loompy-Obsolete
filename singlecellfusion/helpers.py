@@ -1,43 +1,176 @@
 """
-Collection of functions used to perform imputation across datasets
+Helper functions for performing integrative analyses
+The typical user will NOT need to use these functions
 
-The idea of using MNNs and a Gaussian kernel to impute across modalities is
-based on ideas from the Marioni, Krishnaswamy, and Pe'er groups. The relevant
-citations are:
-
-'Batch effects in single-cell RNA sequencing data are corrected by matching
-mutual nearest neighbors' by Laleh Haghverdi, Aaron TL Lun, Michael D Morgan,
-and John C Marioni. Published in Nature Biotechnology. DOI:
-https://doi.org/10.1038/nbt.4091.
-
-'MAGIC: A diffusion-based imputation method reveals gene-gene interactions in
-single-cell RNA-sequencing data.' The publication was authored by: David van
-Dijk, Juozas Nainys, Roshan Sharma, Pooja Kathail, Ambrose J Carr, Kevin R Moon,
-Linas Mazutis, Guy Wolf, Smita Krishnaswamy, Dana Pe'er. Published in Cell.
-DOI: https://doi.org/10.1101/111591.
-
-Below code was written/developed by Fangming Xie and Wayne Doyle, unless noted
+Written by Wayne Doyle
 
 (C) 2018 Mukamel Lab GPLv2
 """
-
 import loompy
 import numpy as np
 import pandas as pd
 import time
 from scipy import sparse
 from scipy.stats import zscore
-from sklearn.metrics import pairwise_distances
 import functools
 import logging
-import gc
 from numba import jit
 from annoy import AnnoyIndex
 from . import general_utils
 from . import loom_utils
 
-# Start log
-ih_log = logging.getLogger(__name__)
+help_log = logging.getLogger(__name__)
+
+
+# Decomposition helpers
+def check_pca_batches(loom_file,
+                      n_pca=50,
+                      batch_size=512,
+                      verbose=False):
+    """
+    Checks and adjusts batch size for PCA
+
+    Args:
+        loom_file (str): Path to loom file
+        n_pca (int): Number of components for PCA
+        batch_size (int): Size of chunks
+        verbose (bool): Print logging messages
+
+    Returns:
+        batch_size (int): Updated batch size to work with PCA
+    """
+    # Get the number of cells
+    with loompy.connect(loom_file) as ds:
+        num_total = ds.shape[1]
+    # Check if batch_size and PCA are even reasonable
+    if num_total < n_pca:
+        err_msg = 'More PCA components {0} than samples {1}'.format(n_pca,
+                                                                    num_total)
+        if verbose:
+            help_log.error(err_msg)
+        raise ValueError(help_log)
+    if batch_size < n_pca:
+        batch_size = n_pca
+    # Adjust based on expected size
+    mod_total = num_total % batch_size
+    adjusted_batch = False
+    if mod_total < n_pca:
+        adjusted_batch = True
+        batch_size = batch_size - n_pca + mod_total
+    if batch_size < n_pca:
+        batch_size = num_total
+    # Report to user
+    if verbose and adjusted_batch:
+        help_log.info('Adjusted batch size to {0} for PCA'.format(batch_size))
+    # Return value
+    return batch_size
+
+
+def prep_pca(view,
+             layer,
+             row_idx,
+             scale_attr=None):
+    """
+    Performs data processing for PCA on a given layer
+
+    Args:
+        view (object): Slice of loom file
+        layer (str): Layer in view
+        row_idx (array): Features to use
+        scale_attr (str): If true, scale cells by this attribute
+            Typically used in snmC-seq to scale by a cell's mC/C
+
+    Returns:
+        dat (matrix): Scaled data for PCA
+    """
+    dat = view.layers[layer][row_idx, :].copy()
+    if scale_attr is not None:
+        rel_scale = view.ca[scale_attr]
+        dat = np.divide(dat, rel_scale)
+    dat = dat.transpose()
+    return dat
+
+
+# Imputation helpers
+def auto_find_mutual_k(loom_file,
+                       valid_ca=None,
+                       verbose=False):
+    """
+    Automatically determines the optimum k for mutual nearest neighbors
+
+    Args:
+        loom_file (str): Path to loom file
+        valid_ca (str): Optional, attribute specifying cells to include
+        verbose (bool): Print logging messages
+
+    Returns:
+        k (int): Optimum k for mutual nearest neighbors
+    """
+    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                          attr=valid_ca,
+                                          columns=True,
+                                          as_bool=True,
+                                          inverse=False)
+    k = np.ceil(0.01 * np.sum(valid_idx))
+    k = general_utils.round_unit(x=k,
+                                 units=10,
+                                 method='nearest')
+    k = np.min([200, k])
+    if verbose:
+        help_log.info('{0} mutual k: {1}'.format(loom_file, k))
+    return k
+
+
+def auto_find_rescue_k(loom_file,
+                       valid_ca,
+                       verbose=False):
+    """
+    Automatically determines the optimum k for rescuing non-MNNs
+
+    Args:
+        loom_file (str): Path to loom file
+        valid_ca (str): Optional, attribute specifying cells to include
+        verbose (bool): Print logging messages
+
+    Returns:
+        k (int): Optimum k for rescue
+    """
+    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                          attr=valid_ca,
+                                          columns=True,
+                                          as_bool=True,
+                                          inverse=False)
+    k = np.ceil(0.001 * np.sum(valid_idx))
+    k = general_utils.round_unit(x=k,
+                                 units=10,
+                                 method='nearest')
+    k = np.min([50, k])
+    if verbose:
+        help_log.info('{0} rescue k: {1}'.format(loom_file,
+                                                 k))
+    return k
+
+
+def check_ka(k,
+             ka):
+    """
+    Checks if the ka value is appropiate for the provided k
+
+    Args:
+        k (int): Number of nearest neighbors
+        ka (int): Nearest neighbor to normalize distances by
+
+    Returns:
+        ka (int): Nearest neighbor to normalize distances by
+            Corrected if ka >= k
+    """
+    if ka >= k:
+        help_log.warning('ka is too large, resetting')
+        ka = np.ceil(0.5 * k)
+        help_log.warning('New ka is {}'.format(ka))
+    else:
+        ka = ka
+    return ka
 
 
 def batch_mean_and_std(loom_file,
@@ -89,7 +222,7 @@ def batch_mean_and_std(loom_file,
         loom_axis = axis
     # Start log
     if verbose:
-        ih_log.info('Calculating statistics for {}'.format(loom_file))
+        help_log.info('Calculating statistics for {}'.format(loom_file))
         t0 = time.time()
     # Get indices
     layers = loom_utils.make_layer_list(layers=layer)
@@ -163,7 +296,7 @@ def batch_mean_and_std(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
+        help_log.info(
             'Calculated statistics in {0:.2f} {1}'.format(time_run, time_fmt))
     return [my_mean, my_std]
 
@@ -199,7 +332,7 @@ def get_decile_variable(loom_file,
         verbose (bool): Print logging messages
     """
     if verbose:
-        ih_log.info(
+        help_log.info(
             'Finding {0}% variable features per decile for {1}'.format(
                 percentile, loom_file))
         t0 = time.time()
@@ -234,7 +367,7 @@ def get_decile_variable(loom_file,
     else:
         err_msg = 'Unsupported measure value ({})'.format(measure)
         if verbose:
-            ih_log.error(err_msg)
+            help_log.error(err_msg)
         raise ValueError(err_msg)
     # Get variable
     my_mean = pd.Series(my_mean, index=feat_labels)
@@ -259,7 +392,7 @@ def get_decile_variable(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
+        help_log.info(
             'Found {0} variable features in {1:.2f} {2}'.format(hvf.shape[0],
                                                                 time_run,
                                                                 time_fmt))
@@ -296,7 +429,7 @@ def get_n_variable_features(loom_file,
         verbose (bool): Print logging messages
     """
     if verbose:
-        ih_log.info(
+        help_log.info(
             'Finding {} variable features for {}'.format(n_feat, loom_file))
         t0 = time.time()
     # Get valid indices
@@ -330,7 +463,7 @@ def get_n_variable_features(loom_file,
     else:
         err_msg = 'Unsupported measure value ({})'.format(measure)
         if verbose:
-            ih_log.error(err_msg)
+            help_log.error(err_msg)
         raise ValueError(err_msg)
     # Get top n variable features
     n_feat = min(n_feat, tmp_var.shape[0])
@@ -343,7 +476,7 @@ def get_n_variable_features(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
+        help_log.info(
             'Found {0} variable features in {1:.2f} {2}'.format(hvf.shape[0],
                                                                 time_run,
                                                                 time_fmt))
@@ -430,13 +563,13 @@ def find_common_features(loom_x,
         feature_id_y (str): Specifies attribute containing feature IDs
         valid_ra_x (str): Optional, attribute that specifies desired features
         valid_ra_y (str): Optional, attribute that specifies desired features
-        remove_version (bool): If true remove versioning
+        remove_version (bool): If true remove version number
             Anything after the first period is dropped
             Useful for GENCODE gene IDs
         verbose (bool): If true, print logging messages
     """
     if verbose:
-        ih_log.info('Finding common features')
+        help_log.info('Finding common features')
     # Get features
     feat_x = prep_for_common(loom_file=loom_x,
                              id_attr=feature_id_x,
@@ -452,7 +585,7 @@ def find_common_features(loom_x,
     if common_feat.shape[0] == 0:
         err_msg = 'Could not identify any common features'
         if verbose:
-            ih_log.error(err_msg)
+            help_log.error(err_msg)
         raise RuntimeError(err_msg)
     # Add indices
     add_common_features(loom_file=loom_x,
@@ -470,15 +603,72 @@ def find_common_features(loom_x,
                    '({1:.2f}% of features in {2}, ' +
                    '{3:.2f}% of features in {4})')
         num_comm = common_feat.shape[0]
-        ih_log.info(log_msg.format(num_comm,
-                                   loom_utils.get_pct(loom_file=loom_x,
-                                                      num_val=num_comm,
-                                                      columns=False),
-                                   loom_x,
-                                   loom_utils.get_pct(loom_file=loom_y,
-                                                      num_val=num_comm,
-                                                      columns=False),
-                                   loom_y))
+        help_log.info(log_msg.format(num_comm,
+                                     loom_utils.get_pct(loom_file=loom_x,
+                                                        num_val=num_comm,
+                                                        columns=False),
+                                     loom_x,
+                                     loom_utils.get_pct(loom_file=loom_y,
+                                                        num_val=num_comm,
+                                                        columns=False),
+                                     loom_y))
+
+
+@jit
+def constrained_knn_search(distance_arr,
+                           neighbor_arr,
+                           num_other,
+                           j_max,
+                           saturated=None,
+                           k=10):
+    """
+    Gets the top K neighbors in the other modality using a
+    constrained search
+
+    This is a buggy-implementation, a more accurate version is coming soon
+
+    Args:
+        distance_arr (ndarray): Distances between elements
+        neighbor_arr (ndarray): Index of neighbors
+        num_other (int): Number of output column in adjacency matrix
+        j_max (int): the maximum number of neighbors cells in the
+            other modality can make with these cells
+        saturated (array-like): cells in the other modality that are
+            removed due to saturation constraint
+        constraint relaxation(float): a ratio determining the number of
+             neighbors that can be formed by cells in the other modality.
+             Increasing it means neighbors can be distributed more
+             unevenly among cells, one means each cell is used equally.
+
+        k (int): The number of nearest neighbors to restrict to
+
+    Returns
+        knn (sparse matrix): the top k constrained neighbors for each cell
+
+    """
+
+    num_arr = neighbor_arr.shape[0]
+    knn = np.zeros((num_arr, num_other))
+    random_order = np.random.choice(range(neighbor_arr.shape[0]),
+                                    size=neighbor_arr.shape[0],
+                                    replace=False)
+    if saturated is None:
+        saturated = []
+    else:
+        to_drop = np.where(np.isin(neighbor_arr, saturated))
+        distance_arr[to_drop[0], to_drop[1]] = np.inf
+    # POSSIBLE BUG: neighbor is based on all cells not just valid cells
+    for i in np.arange(k):  # get the ith nearest neighbor in the other dataset
+        for cell in random_order:  # loop over all cells in rows
+            j = distance_arr[cell, :].argmin()
+            neighbor_idx = neighbor_arr[cell, j]
+            knn[cell, neighbor_idx] = 1
+            distance_arr[cell, j] = np.inf
+            if np.sum(knn[:, neighbor_idx]) > j_max:
+                to_drop = np.where(neighbor_arr == neighbor_idx)
+                distance_arr[to_drop[0], to_drop[1]] = np.inf
+                saturated.append(neighbor_idx)
+    return sparse.lil_matrix(knn), saturated
 
 
 def normalize_adj(adj_mtx,
@@ -514,770 +704,35 @@ def normalize_adj(adj_mtx,
     return norm_adj
 
 
-def update_markov_values(coeff,
-                         self_index,
-                         other_index,
-                         k,
-                         dist_vals,
-                         idx_vals):
-    """
-    Updates distances and indices for MNNs
-
-    Args:
-        coeff (DataFrame): Correlation coefficients
-        self_index (ndarray): Indices for data of interest
-        other_index (ndarray): Indices for correlated data
-        k (int): Number of mutual nearest neighbors
-        dist_vals (ndarray): Distances for MNNs
-        idx_vals (ndarray): Indices for MNNs
-
-    Returns:
-        dist_vals (ndarray): Updated distances for MNNs
-        idx_vals (ndarray): Updated indices for MNNs
-    """
-    if coeff.shape[1] < k:
-        self_k = coeff.shape[1]
-        knn = np.ones((coeff.shape[0], coeff.shape[1]),
-                      dtype=bool)
-    else:
-        self_k = k
-        knn = ((-coeff).rank(axis=1, method='first') <= k).values.astype(bool)
-    new_idx = other_index[np.where(knn)[1]]
-    new_dist = coeff.values[knn]
-    new_idx = np.reshape(new_idx,
-                         newshape=(coeff.shape[0], self_k))
-    new_dist = np.reshape(new_dist,
-                          newshape=(coeff.shape[0], self_k))
-    old_dist = dist_vals[self_index, :]
-    old_idx = idx_vals[self_index, :]
-    comb_dist = np.hstack([old_dist, new_dist])
-    comb_idx = np.hstack([old_idx, new_idx])
-    knn_comb = (pd.DataFrame(-comb_dist).rank(axis=1,
-                                              method='first') <= k)
-    knn_comb = knn_comb.values.astype(bool)
-    comb_dist = comb_dist[knn_comb]
-    comb_idx = comb_idx[knn_comb]
-    comb_dist = np.reshape(comb_dist,
-                           newshape=(coeff.shape[0], k))
-    comb_idx = np.reshape(comb_idx,
-                          newshape=(coeff.shape[0], k))
-    idx_vals[self_index, :] = comb_idx
-    dist_vals[self_index, :] = comb_dist
-    return dist_vals, idx_vals
-
-
-def get_normalized_dist(dat_x,
-                        dat_y,
-                        metric="euclidean"):
-    """
-    Calculates distances between each element in dat_x and dat_y
-    based on the given metric
-
-    Args:
-        dat_x (ndarray): Values to be correlated
-        dat_y (ndarray): Values to be correlated
-        metric (str): Metric for calculating distances
-            euclidean
-            manhattan
-            cosine
-    Returns:
-        dist (DataFrame): Distance between elements
-
-    """
-    # Get number of features
-    if dat_x.shape[1] != dat_y.shape[1]:
-        raise ValueError('dimension mismatch')
-    dist = pairwise_distances(dat_x, dat_y, metric=metric)
-    return pd.DataFrame(dist)
-
-
-@jit
-def generate_coefficients(dat_x,
-                          dat_y):
-    """
-    Calculates correlation coefficients
-
-    Args:
-        dat_x (ndarray): Values to be correlated
-        dat_y (ndarray): Values to be correlated
-
-    Returns:
-        coeff (DataFrame): Correlation coefficients
-
-    Based on dbliss' answer on StackOverflow
-    https://stackoverflow.com/questions/30143417/...
-    computing-the-correlation-coefficient-between-two-multi-dimensional-arrays
-    """
-    # Get number of features
-    if dat_x.shape[1] == dat_y.shape[1]:
-        n = dat_x.shape[1]
-    else:
-        raise ValueError('dimension mismatch')
-    # Calculate coefficients
-
-    mean_x = dat_x.mean(axis=1)
-    mean_y = dat_y.mean(axis=1)
-    std_x = dat_x.std(axis=1,
-                      ddof=n - 1)
-    std_y = dat_y.std(axis=1,
-                      ddof=n - 1)
-    cov = np.dot(dat_x, dat_y.T) - n * np.dot(mean_x[:, np.newaxis],
-                                              mean_y[np.newaxis, :])
-    coeff = cov / np.dot(std_x[:, np.newaxis],
-                         std_y[np.newaxis, :])
-    coeff = pd.DataFrame(coeff)
-    return coeff
-
-
-def generate_distances(loom_x,
-                       observed_x,
-                       dist_x,
-                       idx_x,
-                       max_k_x,
-                       loom_y,
-                       observed_y,
-                       dist_y,
-                       idx_y,
-                       max_k_y,
-                       direction,
-                       feature_id_x,
-                       feature_id_y,
-                       metric="euclidian",
-                       valid_ca_x=None,
-                       ra_x=None,
-                       valid_ca_y=None,
-                       ra_y=None,
-                       batch_x=512,
-                       batch_y=512,
-                       remove_version=False,
-                       verbose=False):
-    """
-    Adds distnace matrices between two modalites to loom files based 
-    on the given distance metrics
-
-    Args:
-        loom_x (str): Path to loom file
-        observed_x (str): Name of layer containing counts
-        dist_x (str): Name of distance attribute for correlations
-        idx_x (str): Name of index attribute for correlations
-        max_k_x (int): Maximum k needed
-        loom_y (str): Path to loom file
-        observed_y (str): Name of layer containing counts
-        dist_y (str): Name of distance attribute for correlations
-        idx_y (str): Name of index attribute for correlations
-        max_k_y (int): Maximum k needed
-        direction (str): Direction of expected correlation
-            negative/- or positive/+
-        feature_id_x (str): Attribute containing feature IDs
-        feature_id_y (str): Attribute containing feature IDs
-        metric (str): Metric for calculating distances
-            euclidean
-            manhattan
-            cosine
-            correlation
-        valid_ca_x (str): Name of column attribute to restrict counts by
-        ra_x (str): Name of row attribute to restrict counts by
-        valid_ca_y (str): Name of column attribute to restrict counts by
-        ra_y (str): Name of row attribute to restrict counts by
-        batch_x (int): Chunk size for batches
-        batch_y (int): Chunk size for batches
-        remove_version (bool): If true, remove gene version number
-        verbose (bool): Print logging messages
-    """
-    if verbose:
-        ih_log.info('Generating {} distance matrix'.format(metric))
-        t0 = time.time()
-    if metric == "correlation":
-        generate_correlations(loom_x=loom_x,
-                              observed_x=observed_x,
-                              corr_dist_x=dist_x,
-                              corr_idx_x=idx_x,
-                              max_k_x=max_k_x,
-                              loom_y=loom_y,
-                              observed_y=observed_y,
-                              corr_dist_y=dist_y,
-                              corr_idx_y=idx_y,
-                              max_k_y=max_k_y,
-                              direction=direction,
-                              feature_id_x=feature_id_x,
-                              feature_id_y=feature_id_y,
-                              valid_ca_x=valid_ca_x,
-                              ra_x=ra_x,
-                              valid_ca_y=valid_ca_y,
-                              ra_y=ra_y,
-                              batch_x=batch_x,
-                              batch_y=batch_y,
-                              remove_version=remove_version,
-                              verbose=False)
-        return
-
-    layers_x = loom_utils.make_layer_list(observed_x)
-    col_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=valid_ca_x,
-                                      columns=True,
-                                      as_bool=True,
-                                      inverse=False)
-    row_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=ra_x,
-                                      columns=False,
-                                      as_bool=True,
-                                      inverse=False)
-    layers_y = loom_utils.make_layer_list(observed_y)
-    col_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=valid_ca_y,
-                                      columns=True,
-                                      as_bool=True,
-                                      inverse=False)
-    row_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=ra_y,
-                                      columns=False,
-                                      as_bool=True,
-                                      inverse=False)
-    # Prepare for correlation matrix
-    with loompy.connect(filename=loom_x) as ds_x:
-        with loompy.connect(filename=loom_y) as ds_y:
-            num_x = ds_x.shape[1]
-            num_y = ds_y.shape[1]
-            dist_x_ = general_utils.make_nan_array(num_rows=num_x,
-                                                   num_cols=max_k_x)
-            idx_x_ = general_utils.make_nan_array(num_rows=num_x,
-                                                  num_cols=max_k_x)
-            dist_y_ = general_utils.make_nan_array(num_rows=num_y,
-                                                   num_cols=max_k_y)
-            idx_y_ = general_utils.make_nan_array(num_rows=num_y,
-                                                  num_cols=max_k_y)
-            x_feat = ds_x.ra[feature_id_x][row_x]
-            y_feat = ds_y.ra[feature_id_y][row_y]
-            if remove_version:
-                x_feat = general_utils.remove_gene_version(x_feat)
-                y_feat = general_utils.remove_gene_version(y_feat)
-    # Loop and make correlations
-    with loompy.connect(filename=loom_x, mode='r') as ds_x:
-        for (_, sel_x, dat_x) in ds_x.scan(axis=1,
-                                           items=col_x,
-                                           layers=layers_x,
-                                           batch_size=batch_x):
-            # Get data
-            dat_x = dat_x.layers[observed_x][row_x, :].T
-            dat_x = (dat_x - dat_x.mean()) / dat_x.std()
-            if direction == '+' or direction == 'positive':
-                pass
-            elif direction == '-' or direction == 'negative':
-                dat_x = -1 * dat_x
-            else:
-                err_msg = 'Unsupported direction value ({})'.format(direction)
-                ih_log.error(err_msg)
-                raise ValueError(err_msg)
-            with loompy.connect(filename=loom_y, mode='r') as ds_y:
-                for (_, sel_y, dat_y) in ds_y.scan(axis=1,
-                                                   items=col_y,
-                                                   layers=layers_y,
-                                                   batch_size=batch_y):
-                    dat_y = dat_y.layers[observed_y][row_y, :].T
-                    dat_y = pd.DataFrame((dat_y - dat_y.mean()) / dat_y.std())
-                    dat_y.columns = y_feat
-                    dat_y = dat_y.loc[:, x_feat]
-                    if dat_y.isnull().any().any():
-                        err_msg = 'Feature mismatch for correlations'
-                        if verbose:
-                            ih_log.error(err_msg)
-                        raise ValueError(err_msg)
-                    dat_y = dat_y.values
-                    coeff = get_normalized_dist(dat_x,
-                                                dat_y,
-                                                metric=metric)
-                    dist_x_, idx_x_ = update_markov_values(coeff=coeff,
-                                                           self_index=sel_x,
-                                                           other_index=sel_y,
-                                                           k=max_k_x,
-                                                           dist_vals=dist_x_,
-                                                           idx_vals=idx_x_)
-                    dist_y_, idx_y_ = update_markov_values(coeff=coeff.T,
-                                                           self_index=sel_y,
-                                                           other_index=sel_x,
-                                                           k=max_k_y,
-                                                           dist_vals=dist_y_,
-                                                           idx_vals=idx_y_)
-
-                    del coeff
-                    gc.collect()
-    # Add data to files
-    with loompy.connect(filename=loom_x) as ds:
-        ds.ca[dist_x] = dist_x_
-        ds.ca[idx_x] = idx_x_.astype(int)
-    with loompy.connect(filename=loom_y) as ds:
-        ds.ca[dist_y] = dist_y_
-        ds.ca[idx_y] = idx_y_.astype(int)
-    if verbose:
-        t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
-            'Generated {0} distance in {1:.2f} {2}'.format(metric, time_run,
-                                                           time_fmt))
-
-
-def generate_correlations(loom_x,
-                          observed_x,
-                          corr_dist_x,
-                          corr_idx_x,
-                          max_k_x,
-                          loom_y,
-                          observed_y,
-                          corr_dist_y,
-                          corr_idx_y,
-                          max_k_y,
-                          direction,
-                          feature_id_x,
-                          feature_id_y,
-                          valid_ca_x=None,
-                          ra_x=None,
-                          valid_ca_y=None,
-                          ra_y=None,
-                          batch_x=512,
-                          batch_y=512,
-                          remove_version=False,
-                          verbose=False):
-    """
-    Adds correlation matrices between two modalites to loom files
-
-    Args:
-        loom_x (str): Path to loom file
-        observed_x (str): Name of layer containing counts
-        corr_dist_x (str): Name of distance attribute for correlations
-        corr_idx_x (str): Name of index attribute for correlations
-        max_k_x (int): Maximum k needed
-        loom_y (str): Path to loom file
-        observed_y (str): Name of layer containing counts
-        corr_dist_y (str): Name of distance attribute for correlations
-        corr_idx_y (str): Name of index attribute for correlations
-        max_k_y (int): Maximum k needed
-        direction (str): Direction of expected correlation
-            negative/- or positive/+
-        feature_id_x (str): Attribute containing feature IDs
-        feature_id_y (str): Attribute containing feature IDs
-        valid_ca_x (str): Name of column attribute to restrict counts by
-        ra_x (str): Name of row attribute to restrict counts by
-        valid_ca_y (str): Name of column attribute to restrict counts by
-        ra_y (str): Name of row attribute to restrict counts by
-        batch_x (int): Chunk size for batches
-        batch_y (int): Chunk size for batches
-        remove_version (bool): If true, remove gene version number
-        verbose (bool): Print logging messages
-    """
-    if verbose:
-        ih_log.info('Generating correlation matrix')
-        t0 = time.time()
-    layers_x = loom_utils.make_layer_list(observed_x)
-    col_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=valid_ca_x,
-                                      columns=True,
-                                      as_bool=True,
-                                      inverse=False)
-    row_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=ra_x,
-                                      columns=False,
-                                      as_bool=True,
-                                      inverse=False)
-    layers_y = loom_utils.make_layer_list(observed_y)
-    col_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=valid_ca_y,
-                                      columns=True,
-                                      as_bool=True,
-                                      inverse=False)
-    row_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=ra_y,
-                                      columns=False,
-                                      as_bool=True,
-                                      inverse=False)
-    # Prepare for correlation matrix
-    with loompy.connect(filename=loom_x) as ds_x:
-        with loompy.connect(filename=loom_y) as ds_y:
-            num_x = ds_x.shape[1]
-            num_y = ds_y.shape[1]
-            dist_x = general_utils.make_nan_array(num_rows=num_x,
-                                                  num_cols=max_k_x)
-            idx_x = general_utils.make_nan_array(num_rows=num_x,
-                                                 num_cols=max_k_x)
-            dist_y = general_utils.make_nan_array(num_rows=num_y,
-                                                  num_cols=max_k_y)
-            idx_y = general_utils.make_nan_array(num_rows=num_y,
-                                                 num_cols=max_k_y)
-            x_feat = ds_x.ra[feature_id_x][row_x]
-            y_feat = ds_y.ra[feature_id_y][row_y]
-            if remove_version:
-                x_feat = general_utils.remove_gene_version(x_feat)
-                y_feat = general_utils.remove_gene_version(y_feat)
-    # Loop and make correlations
-    with loompy.connect(filename=loom_x, mode='r') as ds_x:
-        for (_, sel_x, dat_x) in ds_x.scan(axis=1,
-                                           items=col_x,
-                                           layers=layers_x,
-                                           batch_size=batch_x):
-            # Get data
-            dat_x = dat_x.layers[observed_x][row_x, :].T
-            dat_x = pd.DataFrame(dat_x).rank(pct=True,
-                                             method='first',
-                                             axis=1).values
-            if direction == '+' or direction == 'positive':
-                pass
-            elif direction == '-' or direction == 'negative':
-                dat_x = 1 - dat_x
-            else:
-                raise ValueError('Unsupported direction value')
-            with loompy.connect(filename=loom_y, mode='r') as ds_y:
-                for (_, sel_y, dat_y) in ds_y.scan(axis=1,
-                                                   items=col_y,
-                                                   layers=layers_y,
-                                                   batch_size=batch_y):
-                    dat_y = dat_y.layers[observed_y][row_y, :].T
-                    dat_y = pd.DataFrame(dat_y).rank(pct=True,
-                                                     method='first',
-                                                     axis=1)
-                    dat_y.columns = y_feat
-                    dat_y = dat_y.loc[:, x_feat]
-                    if dat_y.isnull().any().any():
-                        err_msg = 'Feature mismatch for correlations'
-                        if verbose:
-                            ih_log.error(err_msg)
-                        raise ValueError(err_msg)
-                    dat_y = dat_y.values
-                    coeff = generate_coefficients(dat_x,
-                                                  dat_y)
-                    dist_x, idx_x = update_markov_values(coeff=coeff,
-                                                         self_index=sel_x,
-                                                         other_index=sel_y,
-                                                         k=max_k_x,
-                                                         dist_vals=dist_x,
-                                                         idx_vals=idx_x)
-                    dist_y, idx_y = update_markov_values(coeff=coeff.T,
-                                                         self_index=sel_y,
-                                                         other_index=sel_x,
-                                                         k=max_k_y,
-                                                         dist_vals=dist_y,
-                                                         idx_vals=idx_y)
-
-                    del coeff
-                    gc.collect()
-    # Add data to files
-    with loompy.connect(filename=loom_x) as ds:
-        ds.ca[corr_dist_x] = dist_x
-        ds.ca[corr_idx_x] = idx_x.astype(int)
-    with loompy.connect(filename=loom_y) as ds:
-        ds.ca[corr_dist_y] = dist_y
-        ds.ca[corr_idx_y] = idx_y.astype(int)
-    if verbose:
-        t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
-            'Generated correlations in {0:.2f} {1}'.format(time_run, time_fmt))
-
-
-@jit
-def csls_dist(distances,
-              r_x,
-              r_y,
-              avg_weight=.1):
-    """
-    finds adjusted csls distances
-
-    Args:
-        
-        observed_x (str): Name of layer containing counts
-        r_x (numpy array): Array of average cross modality distances
-            for modality x
-        r_y (numpy array): Array of average cross modality distances
-            for modality y
-
-    """
-    csls_distances = 2 * distances
-
-    for pair in zip(np.arange(distances.shape[0]), np.arange(distances.shape[1])):
-        csls_distances[pair[0], pair[1]] = csls_distances[pair[0], pair[1]] \
-                                           - avg_weight * (r_x[pair[0]] + r_y[pair[1]])
-
-    return csls_distances
-
-
-def generate_csls_distance(loom_x,
-                           observed_x,
-                           dist_x,
-                           idx_x,
-                           max_k_x,
-                           loom_y,
-                           observed_y,
-                           dist_y,
-                           idx_y,
-                           max_k_y,
-                           direction,
-                           feature_id_x,
-                           feature_id_y,
-                           check_k=20,
-                           avg_weight=.1,
-                           metric="correlation",
-                           valid_ca_x=None,
-                           ra_x=None,
-                           valid_ca_y=None,
-                           ra_y=None,
-                           batch_x=512,
-                           batch_y=512,
-                           remove_version=False,
-                           verbose=False):
-    """
-    Adds csls adjusted distances between two modalites to loom files
-
-    Args:
-        loom_x (str): Path to loom file
-        observed_x (str): Name of layer containing counts
-        corr_dist_x (str): Name of distance attribute for correlations
-        corr_idx_x (str): Name of index attribute for correlations
-        max_k_x (int): Maximum k needed
-        loom_y (str): Path to loom file
-        observed_y (str): Name of layer containing counts
-        corr_dist_y (str): Name of distance attribute for correlations
-        corr_idx_y (str): Name of index attribute for correlations
-        max_k_y (int): Maximum k needed
-        direction (str): Direction of expected correlation
-            negative/- or positive/+
-        feature_id_x (str): Attribute containing feature IDs
-        feature_id_y (str): Attribute containing feature IDs
-        check_k (int) : a number of nearest neighbors used to find average
-            cross modality distances
-        avg_weight (float) : a wighting factor which decides how much
-            cells benefit from having a large avergae distance
-        metric (str) : how distances bewteen cells are measured. 
-            correlation by default. 
-        valid_ca_x (str): Name of column attribute to restrict counts by
-        ra_x (str): Name of row attribute to restrict counts by
-        valid_ca_y (str): Name of column attribute to restrict counts by
-        ra_y (str): Name of row attribute to restrict counts by
-        batch_x (int): Chunk size for batches
-        batch_y (int): Chunk size for batches
-        remove_version (bool): If true, remove gene version number
-        verbose (bool): Print logging messages
-    """
-    if verbose:
-        ih_log.info('Generating csls distance matrix {}'.format(avg_weight))
-        t0 = time.time()
-    layers_x = loom_utils.make_layer_list(observed_x)
-    col_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=valid_ca_x,
-                                      columns=True,
-                                      as_bool=True,
-                                      inverse=False)
-    row_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=ra_x,
-                                      columns=False,
-                                      as_bool=True,
-                                      inverse=False)
-    layers_y = loom_utils.make_layer_list(observed_y)
-    col_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=valid_ca_y,
-                                      columns=True,
-                                      as_bool=True,
-                                      inverse=False)
-    row_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=ra_y,
-                                      columns=False,
-                                      as_bool=True,
-                                      inverse=False)
-
-    with loompy.connect(filename=loom_x) as ds_x:
-        with loompy.connect(filename=loom_y) as ds_y:
-            num_x = ds_x.shape[1]
-            num_y = ds_y.shape[1]
-            dist_x_ = general_utils.make_nan_array(num_rows=num_x,
-                                                   num_cols=max_k_x)
-            idx_x_ = general_utils.make_nan_array(num_rows=num_x,
-                                                  num_cols=max_k_x)
-            dist_y_ = general_utils.make_nan_array(num_rows=num_y,
-                                                   num_cols=max_k_y)
-            idx_y_ = general_utils.make_nan_array(num_rows=num_y,
-                                                  num_cols=max_k_y)
-            x_feat = ds_x.ra[feature_id_x][row_x]
-            y_feat = ds_y.ra[feature_id_y][row_y]
-            if remove_version:
-                x_feat = general_utils.remove_gene_version(x_feat)
-                y_feat = general_utils.remove_gene_version(y_feat)
-
-    # Loop and make correlations
-    with loompy.connect(filename=loom_x, mode='r') as ds_x:
-        for (_, sel_x, dat_x) in ds_x.scan(axis=1,
-                                           items=col_x,
-                                           layers=layers_x,
-                                           batch_size=batch_x):
-            # Get data
-            r_x = np.array(dat_x.ca[dist_x][:, :check_k]).mean(axis=1)
-
-            dat_x = dat_x.layers[observed_x][row_x, :].T
-
-            if metric == "correlation":
-                dat_x = pd.DataFrame(dat_x).rank(pct=True,
-                                                 method='first',
-                                                 axis=1).values
-                if direction == '+' or direction == 'positive':
-                    pass
-                elif direction == '-' or direction == 'negative':
-                    dat_x = 1 - dat_x
-                else:
-                    raise ValueError('Unsupported direction value')
-            else:
-                dat_x = (dat_x - dat_x.mean()) / dat_x.std()
-
-                if direction == '+' or direction == 'positive':
-                    pass
-                elif direction == '-' or direction == 'negative':
-                    dat_x = -1 * dat_x
-                else:
-                    err_msg = 'Unsupported direction value ({})'.format(direction)
-                    ih_log.error(err_msg)
-                    raise ValueError(err_msg)
-            with loompy.connect(filename=loom_y, mode='r') as ds_y:
-                for (_, sel_y, dat_y) in ds_y.scan(axis=1,
-                                                   items=col_y,
-                                                   layers=layers_y,
-                                                   batch_size=batch_y):
-
-                    r_y = np.array(dat_y.ca[dist_y][:, :check_k]).mean(axis=1)
-                    dat_y = dat_y.layers[observed_y][row_y, :].T
-                    dat_y = pd.DataFrame((dat_y - dat_y.mean()) / dat_y.std())
-                    dat_y.columns = y_feat
-                    dat_y = dat_y.loc[:, x_feat]
-
-                    if dat_y.isnull().any().any():
-                        err_msg = 'Feature mismatch for correlations'
-                        if verbose:
-                            ih_log.error(err_msg)
-                        raise ValueError(err_msg)
-                    dat_y = dat_y.values
-                    if metric == "correlation":
-                        coeff = generate_coefficients(dat_x,
-                                                      dat_y)
-                    else:
-                        coeff = get_normalized_dist(dat_x,
-                                                    dat_y,
-                                                    metric=metric)
-
-                    coeff = csls_dist(distances=coeff.values,
-                                      r_x=r_x,
-                                      r_y=r_y,
-                                      avg_weight=avg_weight)
-
-                    dist_x_, idx_x_ = update_markov_values(coeff=pd.DataFrame(coeff),
-                                                           self_index=sel_x,
-                                                           other_index=sel_y,
-                                                           k=max_k_x,
-                                                           dist_vals=dist_x_,
-                                                           idx_vals=idx_x_)
-                    dist_y_, idx_y_ = update_markov_values(coeff=pd.DataFrame(coeff.T),
-                                                           self_index=sel_y,
-                                                           other_index=sel_x,
-                                                           k=max_k_y,
-                                                           dist_vals=dist_y_,
-                                                           idx_vals=idx_y_)
-
-                    del coeff
-                    gc.collect()
-    # Add data to files
-    with loompy.connect(filename=loom_x) as ds:
-        ds.ca[dist_x] = dist_x_
-        ds.ca[idx_x] = idx_x_.astype(int)
-    with loompy.connect(filename=loom_y) as ds:
-        ds.ca[dist_y] = dist_y_
-        ds.ca[idx_y] = idx_y_.astype(int)
-    if verbose:
-        t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
-            'Generated {0} distance in {1:.2f} {2}'.format(metric, time_run,
-                                                           time_fmt))
-
-
-@jit
-def constrained_knn_search(distance_arr,
-                           neighbor_arr,
-                           num_other,
-                           j_max,
-                           saturated=None,
-                           k=10):
-    """
-    Gets the top K neighbors in the other modality using a
-    constrained search
-
-    Args:
-        distance_arr (ndarray): Distances between elements
-        neighbor_arr (ndarray): Index of neighbors
-        num_other (int): Number of output column in adjacency matrix
-        j_max (int): the maximum number of neighbors cells in the 
-            other modality can make with these cells
-        saturated (array-like): cells in the other modality that are
-            removed due to saturation constraint
-        constraint relaxation(float): a ratio determining the number of
-             neigbors that can be formed by cells in the other modality. 
-             Increasing it means neighbors can be distributed more
-             unevenly among cells, one means each cell is used equally.
-
-        k (int): The number of nearest neibors to restrict to
-
-    Returns
-        knn (sparse matrix): the top k constrained neighbors for each cell
-
-    """
-
-    num_arr = neighbor_arr.shape[0]
-    knn = np.zeros((num_arr, num_other))
-    random_order = np.random.choice(range(neighbor_arr.shape[0]),
-                                    size=neighbor_arr.shape[0],
-                                    replace=False)
-    if saturated is None:
-        saturated = []
-    else:
-        to_drop = np.where(np.isin(neighbor_arr, saturated))
-        distance_arr[to_drop[0], to_drop[1]] = np.inf
-    # POSSIBLE BUG: neighbor is based on all cells not just valid cells
-    for i in np.arange(k):  # get the ith nearest neighbor in the other dataset
-        for cell in random_order:  # loop over all cells in rows
-            j = distance_arr[cell, :].argmin()
-            neighbor_idx = neighbor_arr[cell, j]
-            knn[cell, neighbor_idx] = 1
-            distance_arr[cell, j] = np.inf
-            if np.sum(knn[:, neighbor_idx]) > j_max:
-                to_drop = np.where(neighbor_arr == neighbor_idx)
-                distance_arr[to_drop[0], to_drop[1]] = np.inf
-                saturated.append(neighbor_idx)
-    return sparse.lil_matrix(knn), saturated
-
-
 def gen_impute_adj(loom_file,
                    neighbor_attr,
-                   distance_attr,
                    k,
                    self_idx,
-                   other_idx,
-                   batch_size=512):
+                   other_idx):
     """
     Generates adjacency matrix from a loom file
-        Subfunction used in get_markov_impute
 
     Args:
         loom_file (str): Path to loom file
         neighbor_attr (str): Attribute specifying neighbors
-        distance_attr (str): Attribute specifying distances
         k (int): k value for mutual nearest neighbors
         self_idx (ndarray): Rows in corr to include
         other_idx (ndarray) Columns in corr to include
-        batch_size (int): Size of chunks
 
     Returns
-        adj (sparse matrix): Adjacency matrix with k nearest 
+        adj (sparse matrix): Adjacency matrix with k nearest
                              neighbors of self in other.
     """
+    # Get number of cells
     num_other = other_idx.shape[0]
     num_self = self_idx.shape[0]
-    row_inds = np.repeat(np.arange(num_self), k)
+    # Get row indices (where valid cells are located)
+    row_inds = np.repeat(np.where(self_idx)[0], k)
     with loompy.connect(loom_file) as ds:
-        col_inds = np.ravel(ds.ca[neighbor_attr][:,np.arange(k)])
-    data = [1]*len(row_inds)
-    adj = sparse.coo_matrix((data, (row_inds, col_inds)), 
+        col_inds = np.ravel(ds.ca[neighbor_attr][self_idx, :][:, np.arange(k)])
+        # data = np.ravel(ds.ca[distance_attr][self_idx,:][:,np.arange(k)])
+    data = [1] * len(row_inds)  # all neighbors have same weight
+    adj = sparse.coo_matrix((data, (row_inds, col_inds)),
                             shape=(num_self, num_other))
     return adj
 
@@ -1294,36 +749,36 @@ def gen_impute_knn(loom_target,
                    batch_size=512,
                    verbose=False):
     """
-    Generates a restricted knn adjacentcy matrix from a loom file
+    Generates a restricted knn adjacency matrix from a loom file
 
     Args:
         loom_target (str): Path to loom file for target modality
         loom_source (str): Path to loom file for source modality
         neighbor_attr (str): Attribute specifying neighbors
         distance_attr (str): Attribute specifying distances
-        k (int): The number of nearest neibors to restrict to
+        k (int): The number of nearest neighbors to restrict to
         valid_target (str): Attribute specifying cells to include in target
         valid_source (str): Attribute specifying cells to include in source
         constraint_relaxation(float): a ratio determining the number of
-                                    neigbors that can be formed by 
-                                    cells in the other modality. 
+                                    neighbors that can be formed by
+                                    cells in the other modality.
                                     Increasing it means neighbors can
                                     be distributed more unevenly among
-                                    cells, one means each cell is used 
+                                    cells, one means each cell is used
                                     equally.
         offset (float): Offset for normalization of adjacency matrix
         batch_size (int): Size of chunks
         verbose (bool): Print logging messages
 
      Returns:
-        adj (sparse matrix): Adjacency matrix with k nearest 
+        adj (sparse matrix): Adjacency matrix with k nearest
                              neighbors of self in other.
     """
 
     if verbose:
         log_message = 'Generating restricted KNN adjacency matrix k={}'.format(
             k)
-        ih_log.info(log_message)
+        help_log.info(log_message)
     self_idx = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=valid_target,
                                          columns=True,
@@ -1340,7 +795,7 @@ def gen_impute_knn(loom_target,
     if verbose:
         log_message = 'Other cells are constrained to {} neighbors'.format(
             constraint)
-        ih_log.info(log_message)
+        help_log.info(log_message)
     adj = []
     with loompy.connect(filename=loom_target, mode='r') as ds:
         saturated = None
@@ -1373,13 +828,9 @@ def get_markov_impute(loom_target,
                       valid_source,
                       neighbor_target,
                       neighbor_source,
-                      distance_target,
-                      distance_source,
                       k_src_tar,
                       k_tar_src,
                       offset=1e-5,
-                      batch_target=512,
-                      batch_source=512,
                       verbose=False):
     """
     Generates mutual nearest neighbors Markov for imputation
@@ -1391,20 +842,16 @@ def get_markov_impute(loom_target,
         valid_source (str): Attribute specifying cells to include in source
         neighbor_target (str): Attribute containing neighbor indices
         neighbor_source (str): Attribute containing neighbor indices
-        distance_target (str): Attribute containing neighbor distances
-        distance_source (str): Attribute containing neighbor distances
         k_src_tar (int): Number of nearest neighbors
         k_tar_src (int): Number of nearest neighbors
         offset (float): Offset for normalization of adjacency matrix
-        batch_target (int): Size of batches
-        batch_source (int): Size of batches
         verbose (bool): Print logging messages
 
     Returns:
         w_impute (sparse matrix): Markov matrix for imputation
     """
     if verbose:
-        ih_log.info('Generating mutual adjacency matrix')
+        help_log.info('Generating mutual adjacency matrix')
     cidx_target = loom_utils.get_attr_index(loom_file=loom_target,
                                             attr=valid_target,
                                             columns=True,
@@ -1419,18 +866,14 @@ def get_markov_impute(loom_target,
     # Make adjacency matrix
     ax_xy = gen_impute_adj(loom_file=loom_target,
                            neighbor_attr=neighbor_target,
-                           distance_attr=distance_target,
                            k=k_tar_src,
                            self_idx=cidx_target,
-                           other_idx=cidx_source,
-                           batch_size=batch_target)
+                           other_idx=cidx_source)
     ax_yx = gen_impute_adj(loom_file=loom_source,
                            neighbor_attr=neighbor_source,
-                           distance_attr=distance_source,
                            k=k_src_tar,
                            self_idx=cidx_source,
-                           other_idx=cidx_target,
-                           batch_size=batch_source)
+                           other_idx=cidx_target)
     # Generate mutual neighbors adjacency
     w_impute = (ax_xy.multiply(ax_yx.T))
     # Normalize
@@ -1441,17 +884,18 @@ def get_markov_impute(loom_target,
     c_x = len(np.sort(np.unique(w_impute.nonzero()[0])))
     if verbose:
         rec_msg = '{0}: {1} ({2:.2f}%) cells made direct MNNs'
-        ih_log.info(rec_msg.format(loom_target,
-                                   c_x,
-                                   loom_utils.get_pct(loom_file=loom_target,
-                                                      num_val=c_x,
-                                                      columns=True)))
+        help_log.info(rec_msg.format(loom_target,
+                                     c_x,
+                                     loom_utils.get_pct(loom_file=loom_target,
+                                                        num_val=c_x,
+                                                        columns=True)))
         k_msg = '{0} had a k of {1}'
-        ih_log.info(k_msg.format(loom_target,
-                                 k_tar_src))
-        ih_log.info(k_msg.format(loom_source,
-                                 k_src_tar))
+        help_log.info(k_msg.format(loom_target,
+                                   k_tar_src))
+        help_log.info(k_msg.format(loom_source,
+                                   k_src_tar))
     return w_impute
+
 
 def get_knn_dist_and_idx(t,
                          mat_test,
@@ -1459,6 +903,24 @@ def get_knn_dist_and_idx(t,
                          search_k=-1,
                          include_distances=False,
                          verbose=False):
+    """
+    Gets the distances and indices from an Annoy kNN object
+
+    Args:
+        t (object): Index for an Annoy kNN
+        mat_test (ndarray): Matrix of values to test against kNN
+            Used to find neighbors
+        k (int): Nearest number of neighbors
+        search_k (int): Number of nodes to search
+            -1 defaults to n_trees * n
+        include_distances (bool): Return distances
+            If false, only returns indices
+        verbose (bool): Print logging messages
+
+    Returns
+        knn_dist (ndarray): Optional, distances for k nearest neighbors
+        knn_idx (ndarray): Indices for k nearest neighbors
+    """
     # Check data
     train_obs = t.get_n_items()
     train_f = t.f
@@ -1467,11 +929,13 @@ def get_knn_dist_and_idx(t,
         raise ValueError('mat_test and mat_train dimensions are not identical')
     if k > train_obs:
         if verbose:
-            ih_log.info('Changing k to reflect observations (k now equals {})'.format(train_obs))
+            help_log.info(
+                'Changing k to reflect observations (k now equals {})'.format(
+                    train_obs))
         k = train_obs
     # Set-up for output
-    knn_idx = [0] * (test_obs)
-    knn_dist = [0] * (test_obs)
+    knn_idx = [0] * test_obs
+    knn_dist = [0] * test_obs
     if include_distances:
         for i, vector in enumerate(mat_test):
             res = t.get_nns_by_vector(vector,
@@ -1487,7 +951,7 @@ def get_knn_dist_and_idx(t,
                                       search_k=search_k,
                                       include_distances=include_distances)
             knn_idx[i] = res
-
+    # Convert to arrays
     knn_idx = np.array(knn_idx)
     knn_dist = np.array(knn_dist)
     if include_distances:
@@ -1498,6 +962,17 @@ def get_knn_dist_and_idx(t,
 
 def prep_knn_object(num_dim,
                     metric='euclidean'):
+    """
+    Generates an Annoy kNN index
+
+    Args:
+        num_dim: Number of dimensions for vectors in kNN
+        metric (str): Distance metric for kNN
+            angular, euclidean, manhattan, hamming, dot
+
+    Returns:
+        t (object): Annoy index for kNN
+    """
     t = AnnoyIndex(num_dim,
                    metric=metric)
     t.set_seed(23)
@@ -1507,6 +982,19 @@ def prep_knn_object(num_dim,
 def add_mat_to_knn(mat,
                    t,
                    start_idx=0):
+    """
+    Adds a matrix to an Annoy kNN index
+
+    Args:
+        mat (ndarray): Array of values to add to kNN
+        t (object): Annoy index
+        start_idx (int): Start index for mat in t
+            Useful when adding in batches
+
+    Returns:
+        t (object): Annoy index
+        new_idx (int): Last index added to t
+    """
     for i, val in enumerate(mat):
         new_idx = i + start_idx
         t.add_item(new_idx, val)
@@ -1515,6 +1003,17 @@ def add_mat_to_knn(mat,
 
 def build_knn(t,
               n_trees=10):
+    """
+    Builds a forest of tress for kNN
+
+    Args:
+        t (object): Annoy index for kNN
+        n_trees (int): Number of trees to use for kNN
+            More trees leads to higher precision
+
+    Returns:
+        t (object): Annoy index for kNN
+    """
     t.build(n_trees)
     return t
 
@@ -1527,6 +1026,28 @@ def low_mem_distance_index(mat_train,
                            search_k=-1,
                            include_distances=True,
                            verbose=False):
+    """
+    Uses Annoy to find indices and distances for nearest neighbors
+        This will hold everything in memory, so is recommended for things like
+        finding neighbors in lower dimensional space
+
+    Args:
+        mat_train (ndarray): Matrix to train the kNN on
+        mat_test (ndarray): Matrix to test the kNN on
+        k (int): Number of nearest neighbors
+        metric (str): Distance metric for kNN
+            angular, euclidean, manhattan, hamming, dot
+        n_trees (int): Number of trees for kNN
+            more trees = more precision
+        search_k (int): Number of nodes to use for searching kNN
+            -1 = n_trees * n
+        include_distances (bool): Return distances
+            If false, only returns kNN indices
+        verbose (bool): Print logging messages
+
+    Returns:
+        knn_res (tuple/ndarray): kNN indices and (include_distances) distances
+    """
     # Get dimensions
     train_f = mat_train.shape[1]
     test_f = mat_test.shape[1]
@@ -1535,18 +1056,19 @@ def low_mem_distance_index(mat_train,
     # Build kNN
     t = prep_knn_object(num_dim=train_f,
                         metric=metric)
-    t,_x = add_mat_to_knn(mat=mat_train,
-                          t=t)
+    t, _x = add_mat_to_knn(mat=mat_train,
+                           t=t)
     t = build_knn(t=t,
                   n_trees=n_trees)
     # Get distances and indices
-    knn_dist, knn_idx = get_knn_dist_and_idx(t=t,
-                                             mat_test=mat_test,
-                                             k=k,
-                                             search_k=-1,
-                                             include_distances=include_distances,
-                                             verbose=verbose)
-    return knn_dist, knn_idx
+    knn_res = get_knn_dist_and_idx(t=t,
+                                   mat_test=mat_test,
+                                   k=k,
+                                   search_k=search_k,
+                                   include_distances=include_distances,
+                                   verbose=verbose)
+    return knn_res
+
 
 def train_knn(loom_file,
               layer,
@@ -1556,6 +1078,23 @@ def train_knn(loom_file,
               feat_select,
               reverse_rank,
               batch_size):
+    """
+    Trains a kNN using loom data in batches
+
+    Args:
+        loom_file (str): Path to loom file
+        layer (str): Layer containing data to add to kNN
+        row_arr (ndarray): Boolean vector of rows to include from loom_file
+        col_arr (ndarray): Boolean vector of columns to include from loom_file
+        feat_attr (str): Row attribute in loom_file specifying feature IDs
+        feat_select (ndarray): Vector of features to include for kNN
+        reverse_rank (bool): Reverse the ranking of features in a cell
+            Used if expected correlation is negative
+        batch_size (int): Size of chunks for iterating over loom_file
+
+    Returns:
+        t (object): Annoy kNN index
+    """
     # Prepare kNN object
     t = prep_knn_object(num_dim=feat_select.shape[0],
                         metric='dot')
@@ -1565,25 +1104,25 @@ def train_knn(loom_file,
     # Train kNN object
     with loompy.connect(filename=loom_file, mode='r') as ds:
         for (_, selection, view) in ds.scan(axis=1,
-                                              items=col_arr,
-                                              layers=layers,
-                                              batch_size=batch_size):
+                                            items=col_arr,
+                                            layers=layers,
+                                            batch_size=batch_size):
             # Get data
             dat = pd.DataFrame(view.layers[layer][row_arr, :].T,
-                               columns = view.ra[feat_attr][row_arr])
-            dat = dat.loc[:,feat_select]
-            dat = pd.DataFrame(dat).rank(pct=True,axis=1).apply(zscore,
-                                                                axis=1,
-                                                                result_type='expand').values
+                               columns=view.ra[feat_attr][row_arr])
+            dat = dat.loc[:, feat_select]
+            dat = pd.DataFrame(dat).rank(pct=True, axis=1)
+            dat = dat.apply(zscore, axis=1, result_type='expand').values
             if reverse_rank:
                 dat = -1 * dat
             # Add to kNN
             t, current_idx = add_mat_to_knn(mat=dat,
-                                            t = t,
-                                            start_idx = current_idx)
-            current_idx += 1
+                                            t=t,
+                                            start_idx=current_idx)
+            current_idx += 1  # Need to iterate by one to start at next element
     # Return kNN
     return t
+
 
 def report_knn(loom_file,
                layer,
@@ -1596,28 +1135,48 @@ def report_knn(loom_file,
                t,
                batch_size,
                verbose):
+    """
+    Gets distance and indices from kNN
+
+    Args:
+        loom_file (str): Path to loom file
+        layer (str): Layer with counts for kNN
+        row_arr (ndarray): Boolean vector of rows to include in loom_file
+        col_arr (ndarray): Boolean vector of columns to include in loom_file
+        feat_attr (str): Row attribute specifying feature IDs in loom_file
+        feat_select (ndarray): Vector of features to include from loom_file
+        reverse_rank (bool): Reverse rank ordering of features per cell
+            Useful if expected correlation is negative
+        k (int): Number of nearest neighbors
+        t (object): Annoy index
+        batch_size (int): Size of chunks to iterate for loom file
+        verbose (bool): Print logging messages
+
+    Returns:
+        dist (ndarray): Array of distances for kNN
+        idx (ndarray): Array of indices for kNN
+    """
     # Make distance and index arrays
     with loompy.connect(loom_file) as ds:
         num_cells = ds.shape[1]
-    dist = general_utils.make_nan_array(num_rows=num_cells,
-                                          num_cols=k)
-    idx = general_utils.make_nan_array(num_rows=num_cells,
-                                       num_cols=k)
+    dist = np.zeros((num_cells, k))
+    idx = np.zeros((num_cells, k))
     # Get layers
     layers = loom_utils.make_layer_list(layer)
     # Get results of kNN object
     with loompy.connect(filename=loom_file, mode='r') as ds:
         for (_, selection, view) in ds.scan(axis=1,
-                                              items=col_arr,
-                                              layers=layers,
-                                              batch_size=batch_size):
+                                            items=col_arr,
+                                            layers=layers,
+                                            batch_size=batch_size):
             # Get data
             dat = pd.DataFrame(view.layers[layer][row_arr, :].T,
-                               columns = view.ra[feat_attr][row_arr])
-            dat = dat.loc[:,feat_select]
-            dat = pd.DataFrame(dat).rank(pct=True,axis=1).apply(zscore,
-                                                                axis=1,
-                                                                result_type='expand').values
+                               columns=view.ra[feat_attr][row_arr])
+            dat = dat.loc[:, feat_select]
+            dat = pd.DataFrame(dat).rank(pct=True, axis=1)
+            dat = dat.apply(zscore,
+                            axis=1,
+                            result_type='expand').values
             if reverse_rank:
                 dat = -1 * dat
             # Get distances and indices
@@ -1627,36 +1186,67 @@ def report_knn(loom_file,
                                                      search_k=-1,
                                                      include_distances=True,
                                                      verbose=verbose)
-            dist[selection,:] = tmp_dist
-            idx[selection,:] = tmp_idx
+            dist[selection, :] = tmp_dist
+            idx[selection, :] = tmp_idx
     # Return values
-    return dist,idx
+    return dist, idx
 
-def get_mnn_distance_index(loom_x,
-                          observed_x,
-                          neighbor_distance_x,
-                          neighbor_index_x,
-                          max_k_x,
-                          loom_y,
-                          observed_y,
-                          neighbor_distance_y,
-                          neighbor_index_y,
-                          max_k_y,
-                          direction,
-                          feature_id_x,
-                          feature_id_y,
-                          valid_ca_x=None,
-                          ra_x=None,
-                          valid_ca_y=None,
-                          ra_y=None,
-                           n_trees=10,
-                          batch_x=512,
-                          batch_y=512,
-                          remove_version=False,
-                          verbose=False):
+
+def perform_loom_knn(loom_x,
+                     layer_x,
+                     neighbor_distance_x,
+                     neighbor_index_x,
+                     max_k_x,
+                     loom_y,
+                     layer_y,
+                     neighbor_distance_y,
+                     neighbor_index_y,
+                     max_k_y,
+                     direction,
+                     feature_id_x,
+                     feature_id_y,
+                     valid_ca_x=None,
+                     valid_ra_x=None,
+                     valid_ca_y=None,
+                     valid_ra_y=None,
+                     n_trees=10,
+                     batch_x=512,
+                     batch_y=512,
+                     remove_version=False,
+                     verbose=False):
+    """
+    Gets kNN distances and indices by iterating over a loom file
+
+    Args:
+        loom_x (str): Path to loom file
+        layer_x (str): Layer containing data for loom_x
+        neighbor_distance_x (str): Output attribute for distances
+        neighbor_index_x (str): Output attribute for indices
+        max_k_x (int): Maximum number of nearest neighbors for x
+        loom_y (str): Path to loom file
+        layer_y (str): Layer containing data for loom_y
+        neighbor_distance_y (str): Output attribute for distances
+        neighbor_index_y (str): Output attribute for indices
+        max_k_y  (int): Maximum number of nearest neighbors for y
+        direction (str): Expected direction of relationship between x and y
+            positive or +
+            negative or -
+        feature_id_x (str): Row attribute containing unique feature IDs
+        feature_id_y (str): Row attribute containing unique feature IDs
+        valid_ca_x (str): Column attribute specifying valid cells
+        valid_ra_x (str): Row attribute specifying valid features
+        valid_ca_y (str): Column attribute specifying valid cells
+        valid_ra_y (str): Row attribute specifying valid features
+        n_trees (int): Number of trees to use for kNN
+            more trees = more precision
+        batch_x (int): Size of chunks for iterating over loom_x
+        batch_y (int): Size of chunks for iterating over loom_y
+        remove_version (bool): Remove GENCODE version IDs
+        verbose (bool): Print logging messages
+    """
     # Prep for function
     if verbose:
-        ih_log.info('Finding kNN distances and indices')
+        help_log.info('Finding kNN distances and indices')
         t0 = time.time()
     # Prep for kNN
     col_x = loom_utils.get_attr_index(loom_file=loom_x,
@@ -1665,7 +1255,7 @@ def get_mnn_distance_index(loom_x,
                                       as_bool=True,
                                       inverse=False)
     row_x = loom_utils.get_attr_index(loom_file=loom_x,
-                                      attr=ra_x,
+                                      attr=valid_ra_x,
                                       columns=False,
                                       as_bool=True,
                                       inverse=False)
@@ -1675,19 +1265,19 @@ def get_mnn_distance_index(loom_x,
                                       as_bool=True,
                                       inverse=False)
     row_y = loom_utils.get_attr_index(loom_file=loom_y,
-                                      attr=ra_y,
+                                      attr=valid_ra_y,
                                       columns=False,
                                       as_bool=True,
                                       inverse=False)
     # Make lookup
     lookup_x = pd.Series(np.where(col_x)[0],
-                         index = np.arange(np.sum(col_x)))
+                         index=np.arange(np.sum(col_x)))
     lookup_y = pd.Series(np.where(col_y)[0],
                          index=np.arange(np.sum(col_y)))
 
     # Get features
     with loompy.connect(filename=loom_x) as ds_x:
-         x_feat = ds_x.ra[feature_id_x][row_x]
+        x_feat = ds_x.ra[feature_id_x][row_x]
     with loompy.connect(filename=loom_y) as ds_y:
         y_feat = ds_y.ra[feature_id_y][row_y]
     if remove_version:
@@ -1696,58 +1286,58 @@ def get_mnn_distance_index(loom_x,
     if np.any(np.sort(x_feat) != np.sort(y_feat)):
         raise ValueError('Feature mismatch!')
     # Train kNNs
-    reverse_y = False 
+    reverse_y = False
     if direction == '+' or direction == 'positive':
         reverse_x = False
     elif direction == '-' or direction == 'negative':
-        reverse_x = True 
+        reverse_x = True
     else:
         raise ValueError('Unsupported direction value')
     t_y2x = train_knn(loom_file=loom_x,
-                      layer=observed_x,
+                      layer=layer_x,
                       row_arr=row_x,
                       col_arr=col_x,
                       feat_attr=feature_id_x,
                       feat_select=x_feat,
-                      reverse_rank = reverse_x,
+                      reverse_rank=reverse_x,
                       batch_size=batch_x)
     t_x2y = train_knn(loom_file=loom_y,
-                      layer=observed_y,
+                      layer=layer_y,
                       row_arr=row_y,
                       col_arr=col_y,
                       feat_attr=feature_id_y,
                       feat_select=x_feat,
-                      reverse_rank = reverse_y,
-                      batch_size=batch_y)            
+                      reverse_rank=reverse_y,
+                      batch_size=batch_y)
     # Build trees
     t_x2y = build_knn(t=t_x2y,
-                     n_trees=n_trees)
+                      n_trees=n_trees)
     t_y2x = build_knn(t=t_y2x,
-                     n_trees=n_trees)
+                      n_trees=n_trees)
     # Get distances and indices
-    dist_x,idx_x = report_knn(loom_file=loom_x,
-                              layer=observed_x,
-                              row_arr=row_x,
-                              col_arr=col_x,
-                              feat_attr=feature_id_x,
-                              feat_select=x_feat,
-                              reverse_rank=reverse_x,
-                              k=max_k_x,
-                              t=t_x2y,
-                              batch_size=batch_x,
-                              verbose=verbose)
-    dist_y,idx_y = report_knn(loom_file=loom_y,
-                              layer=observed_y,
-                              row_arr=row_y,
-                              col_arr=col_y,
-                              feat_attr=feature_id_y,
-                              feat_select=x_feat,
-                              reverse_rank=reverse_y,
-                              k=max_k_y,
-                              t=t_y2x,
-                              batch_size=batch_y,
-                              verbose=verbose)
-    # Get correct indices
+    dist_x, idx_x = report_knn(loom_file=loom_x,
+                               layer=layer_x,
+                               row_arr=row_x,
+                               col_arr=col_x,
+                               feat_attr=feature_id_x,
+                               feat_select=x_feat,
+                               reverse_rank=reverse_x,
+                               k=max_k_x,
+                               t=t_x2y,
+                               batch_size=batch_x,
+                               verbose=verbose)
+    dist_y, idx_y = report_knn(loom_file=loom_y,
+                               layer=layer_y,
+                               row_arr=row_y,
+                               col_arr=col_y,
+                               feat_attr=feature_id_y,
+                               feat_select=x_feat,
+                               reverse_rank=reverse_y,
+                               k=max_k_y,
+                               t=t_y2x,
+                               batch_size=batch_y,
+                               verbose=verbose)
+    # Get correct indices (import if restricted to valid cells)
     correct_idx_x = np.reshape(lookup_y.loc[np.ravel(idx_x).astype(int)].values,
                                idx_x.shape)
     correct_idx_y = np.reshape(lookup_x.loc[np.ravel(idx_y).astype(int)].values,
@@ -1762,8 +1352,9 @@ def get_mnn_distance_index(loom_x,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info(
+        help_log.info(
             'Found neighbors in {0:.2f} {1}'.format(time_run, time_fmt))
+
 
 def rescue_markov(loom_target,
                   valid_target,
@@ -1784,10 +1375,7 @@ def rescue_markov(loom_target,
         ka (int): Normalize neighbor distances by the kath cell
         epsilon (float): Noise parameter for Gaussian kernel
         pca_attr (str): Attribute containing PCs
-        metric (str): Metric for calculating distances
-            euclidean
-            manhattan
-            cosine
+        verbose (bool): Print logging messages
 
     Returns:
         w (sparse matrix): Markov matrix for within-modality rescue
@@ -1830,7 +1418,7 @@ def rescue_markov(loom_target,
         distances = distances / (np.sort(distances,
                                          axis=1)[:, ka].reshape(-1, 1))
     # Calculate gaussian kernel
-    adjs = np.exp(-((distances ** 2) / (2*(epsilon ** 2))))
+    adjs = np.exp(-((distances ** 2) / (2 * (epsilon ** 2))))
     # Construct W
     rows = np.repeat(np.arange(tot_n), k)
     cols = mnns[np.ravel(indices)]
@@ -1838,7 +1426,7 @@ def rescue_markov(loom_target,
     w = sparse.csr_matrix((vals, (rows, cols)), shape=(tot_n, tot_n))
     # Normalize
     row_sum = np.ravel(w.sum(axis=1))
-    w = sparse.diags(1.0/(row_sum)).dot(w)
+    w = sparse.diags(1.0 / row_sum).dot(w)
     return w
 
 
@@ -1848,18 +1436,13 @@ def all_markov_self(loom_target,
                     valid_source,
                     neighbor_target,
                     neighbor_source,
-                    distance_target,
-                    distance_source,
                     k_src_tar,
                     k_tar_src,
                     k_rescue,
                     ka,
                     epsilon,
                     pca_attr,
-                    metric,
                     offset=1e-5,
-                    batch_target=512,
-                    batch_source=512,
                     verbose=False):
     """
     Generates Markov used for imputation if all cells are included (rescue)
@@ -1871,21 +1454,13 @@ def all_markov_self(loom_target,
         valid_source (str): Attribute specifying cells to include
         neighbor_target (str): Attribute specifying neighbor indices
         neighbor_source (str): Attribute specifying neighbor indices
-        distance_target (str): Attribute specifying distance values
-        distance_source (str): Attribute specifying distance values
         k_src_tar (int): Number of nearest neighbors for MNN
         k_tar_src (int): Number of nearest neighbors for MNN
         k_rescue (int): Number of nearest neighbors for rescue
         ka (int): Normalizes distance by kath cell's distance
         epsilon (float): Noise parameter for Gaussian kernel
         pca_attr (str): Attribute containing PCs
-        metric (str): Metric for measuring distance
-            euclidean
-            manhattan
-            cosine
         offset (float): Offset for Markov normalization
-        batch_target (int): Size of batches
-        batch_source (int): Size of batches
         verbose (bool): Print logging message
 
     Returns:
@@ -1898,13 +1473,9 @@ def all_markov_self(loom_target,
                                  valid_source=valid_source,
                                  neighbor_target=neighbor_target,
                                  neighbor_source=neighbor_source,
-                                 distance_target=distance_target,
-                                 distance_source=distance_source,
                                  k_src_tar=k_src_tar,
                                  k_tar_src=k_tar_src,
                                  offset=offset,
-                                 batch_target=batch_target,
-                                 batch_source=batch_source,
                                  verbose=verbose)
     mnns = np.unique(w_impute.nonzero()[0])
     # Get w_self
@@ -1915,7 +1486,6 @@ def all_markov_self(loom_target,
                            ka=ka,
                            epsilon=epsilon,
                            pca_attr=pca_attr,
-                           metric=metric,
                            verbose=verbose)
     w_use = w_self.dot(w_impute)
     return w_use
@@ -1932,7 +1502,6 @@ def impute_data(loom_source,
                 cell_target,
                 feat_target,
                 neighbor_distance_target,
-                neighbor_distance_source,
                 neighbor_index_target,
                 neighbor_index_source,
                 k_src_tar,
@@ -1941,13 +1510,11 @@ def impute_data(loom_source,
                 ka,
                 epsilon,
                 pca_attr,
-                metric,
                 neighbor_method='rescue',
                 constraint_relaxation=1.1,
                 remove_version=False,
                 offset=1e-5,
                 batch_target=512,
-                batch_source=512,
                 verbose=False):
     """
     Performs imputation over a list (if provided) of layers imputing values in
@@ -1965,7 +1532,6 @@ def impute_data(loom_source,
         cell_target (str): Column attribute specifying columns to include
         feat_target (str): Row attribute specifying rows to include
         neighbor_distance_target (str): Attribute containing distances for MNNs
-        neighbor_distance_source (str): Attribute containing distances for MNNs
         neighbor_index_target (str): Attribute containing indices for MNNs
         neighbor_index_source (str): Attribute containing indices for MNNs
         k_src_tar (int): Number of nearest neighbors for MNNs
@@ -1974,34 +1540,22 @@ def impute_data(loom_source,
         ka (int): If rescue, neighbor to normalize by
         epsilon (float): If rescue, epsilon value for Gaussian kernel
         pca_attr (str): If rescue, attribute containing PCs
-        metric (str): If rescue, method for calculating distances
-            euclidean
-            manhattan
-            cosine
         neighbor_method (str): How cells are chosen for imputation
             rescue - include cells that did not make MNNs
             mnn - only include cells that made MNNs
             knn - use a restricted knn search to find neighbors
-        constraint_relaxation(float): used for knn impuation
-                                    a ratio determining the number of
-                                    neigbors that can be formed by 
-                                    cells in the other modality. 
-                                    Increasing it means neighbors can
-                                    be distributed more unevenly among
-                                    cells, one means each cell is used 
-                                    equally.
+        constraint_relaxation(float): ratio determining the number of neighbors
+            that can be formed by cells in the other modality.
+            Increasing it means neighbors can be distributed more unevenly among
+            cells, one means each cell is used equally.
+            Used for neighbor_method == knn
         remove_version (bool): Remove GENCODE version numbers from IDs
         offset (float): Offset for Markov normalization
         batch_target (int): Size of batches
-        batch_source (int): Size of batches
         verbose (bool): Print logging messages
-
-    To Do:
-        Possibly allow additional restriction of features during imputation
-        Batch impute to reduce memory
     """
     if verbose:
-        ih_log.info('Generating imputed {}'.format(layer_target))
+        help_log.info('Generating imputed {}'.format(layer_target))
         t0 = time.time()
     # Get indices feature information
     out_idx = loom_utils.get_attr_index(loom_file=loom_target,
@@ -2049,42 +1603,33 @@ def impute_data(loom_source,
                        how='inner')
     feat_df = feat_df.sort_values(by='tar')
     # Get Markov matrix
-    if neighbor_method == "rescue":
+    if neighbor_method == 'rescue':
         w_use = all_markov_self(loom_target=loom_target,
                                 valid_target=cell_target,
                                 loom_source=loom_source,
                                 valid_source=cell_source,
                                 neighbor_target=neighbor_index_target,
                                 neighbor_source=neighbor_index_source,
-                                distance_target=neighbor_distance_target,
-                                distance_source=neighbor_distance_source,
                                 k_src_tar=k_src_tar,
                                 k_tar_src=k_tar_src,
                                 k_rescue=k_rescue,
                                 ka=ka,
                                 epsilon=epsilon,
                                 pca_attr=pca_attr,
-                                metric=metric,
                                 offset=offset,
-                                batch_target=batch_target,
-                                batch_source=batch_source,
                                 verbose=verbose)
-    elif neighbor_method == "mnn":
+    elif neighbor_method == 'mnn':
         w_use = get_markov_impute(loom_target=loom_target,
                                   loom_source=loom_source,
                                   valid_target=cell_target,
                                   valid_source=cell_source,
                                   neighbor_target=neighbor_index_target,
                                   neighbor_source=neighbor_index_source,
-                                  distance_target=neighbor_distance_target,
-                                  distance_source=neighbor_distance_source,
                                   k_src_tar=k_src_tar,
                                   k_tar_src=k_tar_src,
                                   offset=offset,
-                                  batch_target=batch_target,
-                                  batch_source=batch_source,
                                   verbose=verbose)
-    elif neighbor_method == "knn":
+    elif neighbor_method == 'knn':
         w_use = gen_impute_knn(loom_target=loom_target,
                                loom_source=loom_source,
                                neighbor_attr=neighbor_index_target,
@@ -2119,12 +1664,8 @@ def impute_data(loom_source,
             imputed = general_utils.expand_sparse(mtx=imputed,
                                                   col_index=feat_df[
                                                       'tar'].values,
-                                                  col_N=num_feat)
+                                                  col_n=num_feat)
             imputed = imputed.transpose()
-            # POSSIBLE BUG: w_use is restricted to just valid cells, this is
-            # looking for locations to put the data into in the target loom file
-            # based on indices in that restricted w_use matrix. This should
-            # mean that the indices are all off.
             loc_idx = out_idx[batch]
             ds_tar.layers[layer_target][:, loc_idx] = imputed.toarray()
         valid_feat = np.zeros((ds_tar.shape[0],), dtype=int)
@@ -2136,7 +1677,7 @@ def impute_data(loom_source,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        ih_log.info('Imputed data in {0:.2f} {1}'.format(time_run, time_fmt))
+        help_log.info('Imputed data in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
 def loop_impute_data(loom_source,
@@ -2150,7 +1691,6 @@ def loop_impute_data(loom_source,
                      cell_target,
                      feat_target,
                      neighbor_distance_target,
-                     neighbor_distance_source,
                      neighbor_index_target,
                      neighbor_index_source,
                      k_src_tar,
@@ -2159,13 +1699,11 @@ def loop_impute_data(loom_source,
                      ka,
                      epsilon,
                      pca_attr,
-                     metric,
                      neighbor_method='rescue',
                      constraint_relaxation=1.1,
                      remove_version=False,
                      offset=1e-5,
                      batch_target=512,
-                     batch_source=512,
                      verbose=False):
     """
     Performs imputation over a list (if provided) of layers
@@ -2183,8 +1721,6 @@ def loop_impute_data(loom_source,
         feat_target (str): Row attribute specifying rows to include
         neighbor_distance_target (str): Attribute containing distances for MNNs
             corr_dist from prep_imputation
-        neighbor_distance_source (str): Attribute containing distances for MNNs
-            corr_dist from prep_imputation
         neighbor_index_target (str): Attribute containing indices for MNNs
             corr_idx from prep_imputation
         neighbor_index_source (str): Attribute containing indices for MNNs
@@ -2195,30 +1731,25 @@ def loop_impute_data(loom_source,
         ka (int): If rescue, neighbor to normalize by
         epsilon (float): If rescue, epsilon value for Gaussian kernel
         pca_attr (str): If not rescue, attribute containing PCs
-        metric (str): If not rescue, method for calculating distances
-            euclidean
-            manhattan
-            cosine
         neighbor_method (str): How cells are chosen for imputation
             rescue - include cells that did not make MNNs
             mnn - only include cells that made MNNs
             knn - use a restricted knn search to find neighbors
-        constraint_relaxation(float): used for knn impuation
-            a ratio determining the number of neigbors that can be 
+        constraint_relaxation(float): used for knn imputation
+            a ratio determining the number of neighbors that can be
             formed by cells in the other dataset. Increasing it means
-            neighbors can be distributed more unevenly among cells, 
+            neighbors can be distributed more unevenly among cells,
             one means each cell is used equally.
         remove_version (bool): Remove GENCODE version numbers from IDs
         offset (float): Offset for Markov normalization
         batch_target (int): Size of chunks
-        batch_source (int): Size of chunks
         verbose (bool): Print logging messages
     """
     if isinstance(layer_source, list) and isinstance(layer_target, list):
         if len(layer_source) != len(layer_target):
             err_msg = 'layer_source and layer_target must have same length'
             if verbose:
-                ih_log.error(err_msg)
+                help_log.error(err_msg)
             raise ValueError(err_msg)
         for i in range(0, len(layer_source)):
             impute_data(loom_source=loom_source,
@@ -2232,7 +1763,6 @@ def loop_impute_data(loom_source,
                         cell_target=cell_target,
                         feat_target=feat_target,
                         neighbor_distance_target=neighbor_distance_target,
-                        neighbor_distance_source=neighbor_distance_source,
                         neighbor_index_target=neighbor_index_target,
                         neighbor_index_source=neighbor_index_source,
                         k_src_tar=k_src_tar,
@@ -2241,13 +1771,11 @@ def loop_impute_data(loom_source,
                         ka=ka,
                         epsilon=epsilon,
                         pca_attr=pca_attr,
-                        metric=metric,
                         neighbor_method=neighbor_method,
                         constraint_relaxation=constraint_relaxation,
                         remove_version=remove_version,
                         offset=offset,
                         batch_target=batch_target,
-                        batch_source=batch_source,
                         verbose=verbose)
 
     elif isinstance(layer_source, str) and isinstance(layer_target, str):
@@ -2262,7 +1790,6 @@ def loop_impute_data(loom_source,
                     cell_target=cell_target,
                     feat_target=feat_target,
                     neighbor_distance_target=neighbor_distance_target,
-                    neighbor_distance_source=neighbor_distance_source,
                     neighbor_index_target=neighbor_index_target,
                     neighbor_index_source=neighbor_index_source,
                     k_src_tar=k_src_tar,
@@ -2271,96 +1798,13 @@ def loop_impute_data(loom_source,
                     ka=ka,
                     epsilon=epsilon,
                     pca_attr=pca_attr,
-                    metric=metric,
                     neighbor_method=neighbor_method,
                     constraint_relaxation=constraint_relaxation,
                     remove_version=remove_version,
                     offset=offset,
                     batch_target=batch_target,
-                    batch_source=batch_source,
                     verbose=verbose)
     else:
         err_msg = 'layer_source and layer_target must be consistent shapes'
-        ih_log.error(err_msg)
+        help_log.error(err_msg)
         raise ValueError(err_msg)
-
-
-def auto_find_mutual_k(loom_file,
-                       valid_ca=None,
-                       verbose=False):
-    """
-    Automatically determines the optimum k for mutual nearest neighbors
-
-    Args:
-        loom_file (str): Path to loom file
-        valid_ca (str): Optional, attribute specifying cells to include
-        verbose (bool): Print logging messages
-
-    Returns:
-        k (int): Optimum k for mutual nearest neighbors
-    """
-    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                          attr=valid_ca,
-                                          columns=True,
-                                          as_bool=True,
-                                          inverse=False)
-    k = np.ceil(0.01 * np.sum(valid_idx))
-    k = general_utils.round_unit(x=k,
-                                 units=10,
-                                 method='nearest')
-    k = np.min([200, k])
-    if verbose:
-        ih_log.info('{0} mutual k: {1}'.format(loom_file, k))
-    return k
-
-
-def auto_find_rescue_k(loom_file,
-                       valid_ca,
-                       verbose=False):
-    """
-    Automatically determines the optimum k for rescuing non-MNNs
-
-    Args:
-        loom_file (str): Path to loom file
-        valid_ca (str): Optional, attribute specifying cells to include
-        verbose (bool): Print logging messages
-
-    Returns:
-        k (int): Optimum k for rescue
-    """
-    valid_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                          attr=valid_ca,
-                                          columns=True,
-                                          as_bool=True,
-                                          inverse=False)
-    k = np.ceil(0.001 * np.sum(valid_idx))
-    k = general_utils.round_unit(x=k,
-                                 units=10,
-                                 method='nearest')
-    k = np.min([50, k])
-    if verbose:
-        ih_log.info('{0} rescue k: {1}'.format(loom_file,
-                                               k))
-    return k
-
-
-def check_ka(k,
-             ka):
-    """
-    Checks if the ka value is appropiate for the provided k
-
-    Args:
-        k (int): Number of nearest neighbors
-        ka (int): Nearest neighbor to normalize distances by
-
-    Returns:
-        ka (int): Nearest neighbor to normalize distances by
-            Corrected if ka >= k
-    """
-    if ka >= k:
-        ih_log.warning('ka is too large, resetting')
-        ka = np.ceil(0.5 * k)
-        ih_log.warning('New ka is {}'.format(ka))
-    else:
-        ka = ka
-    return ka

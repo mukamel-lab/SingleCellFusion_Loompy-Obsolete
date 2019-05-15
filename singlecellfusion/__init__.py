@@ -5,7 +5,7 @@ __author__ = 'Mukamel Lab <lab@brainome.ucsd.edu>'
 __all__ = ['decomposition',
            'general_utils',
            'imputation',
-           'imputation_helpers',
+           'helpers',
            'loom_utils',
            'recipes',
            ]
