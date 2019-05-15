@@ -1667,9 +1667,8 @@ def impute_data(loom_source,
         for batch in batches:
             tmp_use = w_use[batch, :]
             use_idx = np.unique(tmp_use.nonzero()[1])
-            use_src = np.where(cidx_src)[0][use_idx]
             with loompy.connect(filename=loom_source, mode='r') as ds_src:
-                tmp_dat = ds_src.layers[layer_source][:, use_src][
+                tmp_dat = ds_src.layers[layer_source][:, use_idx][
                           feat_df['src'].values, :]
                 tmp_dat = sparse.csr_matrix(tmp_dat.T)
             imputed = tmp_use[:, use_idx].dot(tmp_dat)
