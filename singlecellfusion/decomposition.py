@@ -12,7 +12,7 @@ import logging
 import time
 from . import loom_utils
 from . import general_utils
-from . import decomposition_helpers as dh
+from . import helpers
 
 # Start log
 decomp_log = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def batch_pca(loom_file,
         verbose (bool): If true, print logging messages
 
     Returns:
-        Adds componenets to ds.ca.{out_attr}
+        Adds components to ds.ca.{out_attr}
         Adds quality control to ds.ca.Valid_{out_attr}
     """
     if verbose:
@@ -59,10 +59,10 @@ def batch_pca(loom_file,
     else:
         n_tmp = n_pca
     # Check user's batch size
-    batch_size = dh.check_pca_batches(loom_file=loom_file,
-                                      n_pca=n_pca,
-                                      batch_size=batch_size,
-                                      verbose=verbose)
+    batch_size = helpers.check_pca_batches(loom_file=loom_file,
+                                           n_pca=n_pca,
+                                           batch_size=batch_size,
+                                           verbose=verbose)
     # Perform PCA
     pca = IncrementalPCA(n_components=n_tmp)
     with loompy.connect(loom_file) as ds:
@@ -83,10 +83,10 @@ def batch_pca(loom_file,
                                     layers=layers,
                                     axis=1,
                                     batch_size=batch_size):
-            dat = dh.prep_pca(view=view,
-                              layer=layer,
-                              row_idx=row_idx,
-                              scale_attr=scale_attr)
+            dat = helpers.prep_pca(view=view,
+                                   layer=layer,
+                                   row_idx=row_idx,
+                                   scale_attr=scale_attr)
             pca.partial_fit(dat)
         if verbose:
             t_fit = time.time()
@@ -97,10 +97,10 @@ def batch_pca(loom_file,
                                             layers=layers,
                                             axis=1,
                                             batch_size=batch_size):
-            dat = dh.prep_pca(view=view,
-                              layer=layer,
-                              row_idx=row_idx,
-                              scale_attr=scale_attr)
+            dat = helpers.prep_pca(view=view,
+                                   layer=layer,
+                                   row_idx=row_idx,
+                                   scale_attr=scale_attr)
             dat = pca.transform(dat)
             if drop_first:
                 dat = dat[:, 1:]
