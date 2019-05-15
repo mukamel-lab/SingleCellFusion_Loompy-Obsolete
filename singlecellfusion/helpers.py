@@ -1077,6 +1077,7 @@ def train_knn(loom_file,
               feat_attr,
               feat_select,
               reverse_rank,
+              remove_version,
               batch_size):
     """
     Trains a kNN using loom data in batches
@@ -1090,6 +1091,7 @@ def train_knn(loom_file,
         feat_select (ndarray): Vector of features to include for kNN
         reverse_rank (bool): Reverse the ranking of features in a cell
             Used if expected correlation is negative
+        remove_version (bool): Remove GENCODE version ID
         batch_size (int): Size of chunks for iterating over loom_file
 
     Returns:
@@ -1110,6 +1112,8 @@ def train_knn(loom_file,
             # Get data
             dat = pd.DataFrame(view.layers[layer][row_arr, :].T,
                                columns=view.ra[feat_attr][row_arr])
+            if remove_version:
+                dat.columns = general_utils.remove_gene_version(dat.columns)
             dat = dat.loc[:, feat_select]
             dat = pd.DataFrame(dat).rank(pct=True, axis=1)
             dat = dat.apply(zscore, axis=1, result_type='expand').values
@@ -1134,6 +1138,7 @@ def report_knn(loom_file,
                k,
                t,
                batch_size,
+               remove_version,
                verbose):
     """
     Gets distance and indices from kNN
@@ -1150,6 +1155,7 @@ def report_knn(loom_file,
         k (int): Number of nearest neighbors
         t (object): Annoy index
         batch_size (int): Size of chunks to iterate for loom file
+        remove_version (bool): Remove GENCODE gene version ID
         verbose (bool): Print logging messages
 
     Returns:
@@ -1172,6 +1178,8 @@ def report_knn(loom_file,
             # Get data
             dat = pd.DataFrame(view.layers[layer][row_arr, :].T,
                                columns=view.ra[feat_attr][row_arr])
+            if remove_version:
+                dat.columns = general_utils.remove_gene_version(dat.columns)
             dat = dat.loc[:, feat_select]
             dat = pd.DataFrame(dat).rank(pct=True, axis=1)
             dat = dat.apply(zscore,
@@ -1300,6 +1308,7 @@ def perform_loom_knn(loom_x,
                       feat_attr=feature_id_x,
                       feat_select=x_feat,
                       reverse_rank=reverse_x,
+                      remove_version=remove_version,
                       batch_size=batch_x)
     t_x2y = train_knn(loom_file=loom_y,
                       layer=layer_y,
@@ -1308,6 +1317,7 @@ def perform_loom_knn(loom_x,
                       feat_attr=feature_id_y,
                       feat_select=x_feat,
                       reverse_rank=reverse_y,
+                      remove_version=remove_version,
                       batch_size=batch_y)
     # Build trees
     t_x2y = build_knn(t=t_x2y,
@@ -1325,6 +1335,7 @@ def perform_loom_knn(loom_x,
                                k=max_k_x,
                                t=t_x2y,
                                batch_size=batch_x,
+                               remove_version=remove_version,
                                verbose=verbose)
     dist_y, idx_y = report_knn(loom_file=loom_y,
                                layer=layer_y,
@@ -1336,6 +1347,7 @@ def perform_loom_knn(loom_x,
                                k=max_k_y,
                                t=t_y2x,
                                batch_size=batch_y,
+                               remove_version=remove_version,
                                verbose=verbose)
     # Get correct indices (import if restricted to valid cells)
     correct_idx_x = np.reshape(lookup_y.loc[np.ravel(idx_x).astype(int)].values,
