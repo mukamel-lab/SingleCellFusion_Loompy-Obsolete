@@ -1375,6 +1375,7 @@ def rescue_markov(loom_target,
                   ka,
                   epsilon,
                   pca_attr,
+                  offset = 1e-5,
                   verbose=False):
     """
     Generates Markov for rescuing cells
@@ -1387,6 +1388,7 @@ def rescue_markov(loom_target,
         ka (int): Normalize neighbor distances by the kath cell
         epsilon (float): Noise parameter for Gaussian kernel
         pca_attr (str): Attribute containing PCs
+        offset (float): Offset for avoiding divide by zero errors
         verbose (bool): Print logging messages
 
     Returns:
@@ -1410,7 +1412,7 @@ def rescue_markov(loom_target,
     cidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=valid_target,
                                          columns=True,
-                                         as_bool=False,
+                                         as_bool=True,
                                          inverse=False)
     tot_n = cidx_tar.shape[0]
     # Get PCs
@@ -1432,13 +1434,14 @@ def rescue_markov(loom_target,
     # Calculate gaussian kernel
     adjs = np.exp(-((distances ** 2) / (2 * (epsilon ** 2))))
     # Construct W
-    rows = np.repeat(np.arange(tot_n), k)
+    rows = np.repeat(np.where(cidx_tar)[0], k)
     cols = mnns[np.ravel(indices)]
     vals = np.ravel(adjs)
     w = sparse.csr_matrix((vals, (rows, cols)), shape=(tot_n, tot_n))
     # Normalize
-    row_sum = np.ravel(w.sum(axis=1))
-    w = sparse.diags(1.0 / row_sum).dot(w)
+    w = normalize_adj(adj_mtx=w,
+                      axis=1,
+                      offset=offset)
     return w
 
 
@@ -1498,6 +1501,7 @@ def all_markov_self(loom_target,
                            ka=ka,
                            epsilon=epsilon,
                            pca_attr=pca_attr,
+                           offset=offset,
                            verbose=verbose)
     w_use = w_self.dot(w_impute)
     return w_use
@@ -1570,11 +1574,6 @@ def impute_data(loom_source,
         help_log.info('Generating imputed {}'.format(layer_target))
         t0 = time.time()
     # Get indices feature information
-    out_idx = loom_utils.get_attr_index(loom_file=loom_target,
-                                        attr=cell_target,
-                                        columns=True,
-                                        as_bool=False,
-                                        inverse=False)
     fidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=feat_target,
                                          columns=False,
@@ -1660,25 +1659,24 @@ def impute_data(loom_source,
         batches = np.array_split(valid_idx,
                                  np.ceil(valid_idx.shape[0] / batch_target))
         for batch in batches:
-            tmp_use = w_use[batch, :]
-            use_idx = np.unique(tmp_use.nonzero()[1])
+            tmp_w = w_use[batch, :]
+            use_feat = np.unique(tmp_w.nonzero()[1])
             with loompy.connect(filename=loom_source, mode='r') as ds_src:
-                tmp_dat = ds_src.layers[layer_source][:, use_idx][
+                tmp_dat = ds_src.layers[layer_source][:, use_feat][
                           feat_df['src'].values, :]
                 tmp_dat = sparse.csr_matrix(tmp_dat.T)
-            imputed = tmp_use[:, use_idx].dot(tmp_dat)
+            imputed = tmp_w[:, use_feat].dot(tmp_dat)
             imputed = general_utils.expand_sparse(mtx=imputed,
                                                   col_index=feat_df[
                                                       'tar'].values,
                                                   col_n=num_feat)
             imputed = imputed.transpose()
-            loc_idx = out_idx[batch]
-            ds_tar.layers[layer_target][:, loc_idx] = imputed.toarray()
+            ds_tar.layers[layer_target][:, batch] = imputed.toarray()
         valid_feat = np.zeros((ds_tar.shape[0],), dtype=int)
         valid_feat[feat_df['tar'].values] = 1
         ds_tar.ra['Valid_{}'.format(layer_target)] = valid_feat
         valid_cells = np.zeros((ds_tar.shape[1],), dtype=int)
-        valid_cells[out_idx[valid_idx]] = 1
+        valid_cells[valid_idx] = 1
         ds_tar.ca['Valid_{}'.format(layer_target)] = valid_cells
     if verbose:
         t1 = time.time()
