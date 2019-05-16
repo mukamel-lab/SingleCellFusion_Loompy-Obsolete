@@ -658,7 +658,7 @@ def constrained_knn_search(distance_arr,
         to_drop = np.where(np.isin(neighbor_arr, saturated))
         distance_arr[to_drop[0], to_drop[1]] = np.inf
     # POSSIBLE BUG: neighbor is based on all cells not just valid cells
-    for i in np.arange(k):  # get the ith nearest neighbor in the other dataset
+    for _i in np.arange(k):  # get the ith nearest neighbor in the other dataset
         for cell in random_order:  # loop over all cells in rows
             j = distance_arr[cell, :].argmin()
             neighbor_idx = neighbor_arr[cell, j]
@@ -1416,7 +1416,7 @@ def rescue_markov(loom_target,
     # Get PCs
     with loompy.connect(loom_target) as ds:
         all_pcs = ds.ca[pca_attr][cidx_tar, :]
-    mnn_pcs = all_pcs[mnns, :]
+        mnn_pcs = ds.ca[pca_attr][mnns,:]
     # Get within-modality MNN
     distances, indices = low_mem_distance_index(mat_train=mnn_pcs,
                                                 mat_test=all_pcs,
@@ -1578,11 +1578,6 @@ def impute_data(loom_source,
     fidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=feat_target,
                                          columns=False,
-                                         as_bool=True,
-                                         inverse=False)
-    cidx_src = loom_utils.get_attr_index(loom_file=loom_source,
-                                         attr=cell_source,
-                                         columns=True,
                                          as_bool=True,
                                          inverse=False)
     fidx_src = loom_utils.get_attr_index(loom_file=loom_source,
