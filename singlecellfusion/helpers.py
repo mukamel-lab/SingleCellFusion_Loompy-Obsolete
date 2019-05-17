@@ -961,7 +961,8 @@ def get_knn_dist_and_idx(t,
 
 
 def prep_knn_object(num_dim,
-                    metric='euclidean'):
+                    metric='euclidean',
+                    seed=None):
     """
     Generates an Annoy kNN index
 
@@ -969,13 +970,15 @@ def prep_knn_object(num_dim,
         num_dim: Number of dimensions for vectors in kNN
         metric (str): Distance metric for kNN
             angular, euclidean, manhattan, hamming, dot
+        seed (int): Seed for Annoy
 
     Returns:
         t (object): Annoy index for kNN
     """
     t = AnnoyIndex(num_dim,
                    metric=metric)
-    t.set_seed(23)
+    if seed is not None:
+        t.set_seed(seed)
     return t
 
 
@@ -1025,6 +1028,7 @@ def low_mem_distance_index(mat_train,
                            n_trees=10,
                            search_k=-1,
                            include_distances=True,
+                           seed=None,
                            verbose=False):
     """
     Uses Annoy to find indices and distances for nearest neighbors
@@ -1043,6 +1047,7 @@ def low_mem_distance_index(mat_train,
             -1 = n_trees * n
         include_distances (bool): Return distances
             If false, only returns kNN indices
+        seed (int): Seed for Annoy
         verbose (bool): Print logging messages
 
     Returns:
@@ -1055,7 +1060,8 @@ def low_mem_distance_index(mat_train,
         raise ValueError('mat_train and mat_test dimensions are not identical')
     # Build kNN
     t = prep_knn_object(num_dim=train_f,
-                        metric=metric)
+                        metric=metric,
+                        seed=seed)
     t, _x = add_mat_to_knn(mat=mat_train,
                            t=t)
     t = build_knn(t=t,
@@ -1078,6 +1084,7 @@ def train_knn(loom_file,
               feat_select,
               reverse_rank,
               remove_version,
+              seed,
               batch_size):
     """
     Trains a kNN using loom data in batches
@@ -1092,6 +1099,7 @@ def train_knn(loom_file,
         reverse_rank (bool): Reverse the ranking of features in a cell
             Used if expected correlation is negative
         remove_version (bool): Remove GENCODE version ID
+        seed (int): Seed for annoy
         batch_size (int): Size of chunks for iterating over loom_file
 
     Returns:
@@ -1099,7 +1107,8 @@ def train_knn(loom_file,
     """
     # Prepare kNN object
     t = prep_knn_object(num_dim=feat_select.shape[0],
-                        metric='dot')
+                        metric='dot',
+                        seed=seed)
     current_idx = 0
     # Get layers
     layers = loom_utils.make_layer_list(layer)
@@ -1218,6 +1227,7 @@ def perform_loom_knn(loom_x,
                      valid_ca_y=None,
                      valid_ra_y=None,
                      n_trees=10,
+                     seed=None,
                      batch_x=512,
                      batch_y=512,
                      remove_version=False,
@@ -1247,6 +1257,7 @@ def perform_loom_knn(loom_x,
         valid_ra_y (str): Row attribute specifying valid features
         n_trees (int): Number of trees to use for kNN
             more trees = more precision
+        seed (int): Seed for Annoy
         batch_x (int): Size of chunks for iterating over loom_x
         batch_y (int): Size of chunks for iterating over loom_y
         remove_version (bool): Remove GENCODE version IDs
@@ -1309,6 +1320,7 @@ def perform_loom_knn(loom_x,
                       feat_select=x_feat,
                       reverse_rank=reverse_x,
                       remove_version=remove_version,
+                      seed=seed,
                       batch_size=batch_x)
     t_x2y = train_knn(loom_file=loom_y,
                       layer=layer_y,
@@ -1318,6 +1330,7 @@ def perform_loom_knn(loom_x,
                       feat_select=x_feat,
                       reverse_rank=reverse_y,
                       remove_version=remove_version,
+                      seed=seed,
                       batch_size=batch_y)
     # Build trees
     t_x2y = build_knn(t=t_x2y,
@@ -1375,7 +1388,8 @@ def rescue_markov(loom_target,
                   ka,
                   epsilon,
                   pca_attr,
-                  offset = 1e-5,
+                  offset=1e-5,
+                  seed=None,
                   verbose=False):
     """
     Generates Markov for rescuing cells
@@ -1389,6 +1403,7 @@ def rescue_markov(loom_target,
         epsilon (float): Noise parameter for Gaussian kernel
         pca_attr (str): Attribute containing PCs
         offset (float): Offset for avoiding divide by zero errors
+        seed (int): Seed for annoy
         verbose (bool): Print logging messages
 
     Returns:
@@ -1418,7 +1433,7 @@ def rescue_markov(loom_target,
     # Get PCs
     with loompy.connect(loom_target) as ds:
         all_pcs = ds.ca[pca_attr][cidx_tar, :]
-        mnn_pcs = ds.ca[pca_attr][mnns,:]
+        mnn_pcs = ds.ca[pca_attr][mnns, :]
     # Get within-modality MNN
     distances, indices = low_mem_distance_index(mat_train=mnn_pcs,
                                                 mat_test=all_pcs,
@@ -1427,7 +1442,8 @@ def rescue_markov(loom_target,
                                                 n_trees=10,
                                                 search_k=-1,
                                                 verbose=verbose,
-                                                include_distances=True)
+                                                include_distances=True,
+                                                seed=seed)
     if ka > 0:
         distances = distances / (np.sort(distances,
                                          axis=1)[:, ka].reshape(-1, 1))
@@ -1458,6 +1474,7 @@ def all_markov_self(loom_target,
                     epsilon,
                     pca_attr,
                     offset=1e-5,
+                    seed=None,
                     verbose=False):
     """
     Generates Markov used for imputation if all cells are included (rescue)
@@ -1476,6 +1493,7 @@ def all_markov_self(loom_target,
         epsilon (float): Noise parameter for Gaussian kernel
         pca_attr (str): Attribute containing PCs
         offset (float): Offset for Markov normalization
+        seed (int): Seed for Annoy
         verbose (bool): Print logging message
 
     Returns:
@@ -1502,6 +1520,7 @@ def all_markov_self(loom_target,
                            epsilon=epsilon,
                            pca_attr=pca_attr,
                            offset=offset,
+                           seed=seed,
                            verbose=verbose)
     w_use = w_self.dot(w_impute)
     return w_use
@@ -1530,6 +1549,7 @@ def impute_data(loom_source,
                 constraint_relaxation=1.1,
                 remove_version=False,
                 offset=1e-5,
+                seed=None,
                 batch_target=512,
                 verbose=False):
     """
@@ -1567,6 +1587,7 @@ def impute_data(loom_source,
             Used for neighbor_method == knn
         remove_version (bool): Remove GENCODE version numbers from IDs
         offset (float): Offset for Markov normalization
+        seed (int): Seed for Annoy
         batch_target (int): Size of batches
         verbose (bool): Print logging messages
     """
@@ -1623,6 +1644,7 @@ def impute_data(loom_source,
                                 epsilon=epsilon,
                                 pca_attr=pca_attr,
                                 offset=offset,
+                                seed=seed,
                                 verbose=verbose)
     elif neighbor_method == 'mnn':
         w_use = get_markov_impute(loom_target=loom_target,
@@ -1707,6 +1729,7 @@ def loop_impute_data(loom_source,
                      constraint_relaxation=1.1,
                      remove_version=False,
                      offset=1e-5,
+                     seed=None,
                      batch_target=512,
                      verbose=False):
     """
@@ -1746,6 +1769,7 @@ def loop_impute_data(loom_source,
             one means each cell is used equally.
         remove_version (bool): Remove GENCODE version numbers from IDs
         offset (float): Offset for Markov normalization
+        seed (int): Seed for Annoy
         batch_target (int): Size of chunks
         verbose (bool): Print logging messages
     """
@@ -1779,6 +1803,7 @@ def loop_impute_data(loom_source,
                         constraint_relaxation=constraint_relaxation,
                         remove_version=remove_version,
                         offset=offset,
+                        seed=seed,
                         batch_target=batch_target,
                         verbose=verbose)
 

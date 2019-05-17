@@ -244,6 +244,7 @@ def impute_between_datasets(loom_x,
                             valid_ca_y=None,
                             valid_ra_x=None,
                             valid_ra_y=None,
+                            seed=None,
                             batch_x=512,
                             batch_y=512,
                             remove_id_version=False,
@@ -298,6 +299,7 @@ def impute_between_datasets(loom_x,
         valid_ca_y (str): Attribute specifying valid cells
         valid_ra_x (str): Attribute specifying valid features
         valid_ra_y (str): Attribute specifying valid features
+        seed (int): Seed for random processes
         batch_x (int): Batch size
         batch_y (int): Batch size
         remove_id_version (bool); Remove GENCODE gene version
@@ -353,6 +355,7 @@ def impute_between_datasets(loom_x,
                                  valid_ca_y=valid_ca_y,
                                  valid_ra_y=common_attr,
                                  n_trees=10,
+                                 seed=seed,
                                  batch_x=batch_x,
                                  batch_y=batch_y,
                                  remove_version=remove_id_version,
@@ -405,6 +408,7 @@ def impute_between_datasets(loom_x,
                              constraint_relaxation=constraint_relaxation,
                              remove_version=remove_id_version,
                              offset=1e-5,
+                             seed=seed,
                              batch_target=batch_x,
                              verbose=verbose)
     # Impute data for loom_y
@@ -431,6 +435,7 @@ def impute_between_datasets(loom_x,
                              constraint_relaxation=constraint_relaxation,
                              remove_version=remove_id_version,
                              offset=1e-5,
+                             seed=seed,
                              batch_target=batch_y,
                              verbose=verbose)
     # Impute data for loom_y
