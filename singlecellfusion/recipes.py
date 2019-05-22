@@ -41,6 +41,7 @@ def pairwise_impute(loom_x,
                     rescue_k_x=10,
                     rescue_k_y=10,
                     constraint_relaxation=1.1,
+                    speed_factor=10,
                     valid_ca_x=None,
                     valid_ca_y=None,
                     valid_ra_x=None,
@@ -100,6 +101,9 @@ def pairwise_impute(loom_x,
             Used if neighbor_method is rescue
         constraint_relaxation: Specifies ratio of neighbors formed by cells
             Used if neighbor_method is knn
+        speed_factor (int): Scale number of found kNNs by this number
+            Used if neighbor_method is knn
+            Speeds up code at expense of memory
         valid_ca_x (str): Column attribute specifying valid loom_x cells
         valid_ca_y (str): Column attribute specifying valid loom_y cells
         valid_ra_x (str): Column attribute specifying valid loom_x features
@@ -160,6 +164,7 @@ def pairwise_impute(loom_x,
                                        neighbor_distance_y='corr_distances',
                                        neighbor_method=neighbor_method,
                                        constraint_relaxation=constraint_relaxation,
+                                       speed_factor=speed_factor,
                                        feature_id_x=feature_id_x,
                                        feature_id_y=feature_id_y,
                                        mutual_k_x_to_y=k_x_to_y,

@@ -152,6 +152,7 @@ def batch_add_sparse(loom_file,
                           col_attrs=batch_col)
             append = True
 
+
 def auto_find_mutual_k(loom_file,
                        valid_ca=None,
                        verbose=False):
@@ -672,17 +673,20 @@ def find_common_features(loom_x,
                                                         num_val=num_comm,
                                                         columns=False),
                                      loom_y))
+
+
 def temp_zscore_loom(loom_file,
                      raw_layer,
                      feat_attr='Accession',
-                     valid_ca = None,
-                     valid_ra = None,
+                     valid_ca=None,
+                     valid_ra=None,
                      batch_size=512,
                      tmp_dir=None,
                      verbose=False):
     if verbose:
         t0 = time.time()
-        help_log.info('Generating temporary z-scored file for {}'.format(loom_file))
+        help_log.info(
+            'Generating temporary z-scored file for {}'.format(loom_file))
     # Prep
     col_idx = loom_utils.get_attr_index(loom_file=loom_file,
                                         attr=valid_ca,
@@ -695,12 +699,12 @@ def temp_zscore_loom(loom_file,
                                         as_bool=False,
                                         inverse=False)
     layers = loom_utils.make_layer_list(raw_layer)
-    append_loom=False
-    start_pos=0
+    append_loom = False
+    start_pos = 0
     # Make temporary loom file
     if tmp_dir is None:
         tmp_dir = tempfile.gettempdir()
-    tmp_loom = tempfile.mktemp(suffix='.loom',dir=tmp_dir)
+    tmp_loom = tempfile.mktemp(suffix='.loom', dir=tmp_dir)
     with loompy.connect(filename=loom_file, mode='r+') as ds:
         for (_, selection, view) in ds.scan(axis=1,
                                             items=col_idx,
@@ -711,31 +715,31 @@ def temp_zscore_loom(loom_file,
             dat = pd.DataFrame(dat).rank(pct=True, axis=1)
             dat = dat.apply(zscore, axis=1, result_type='expand').values.T
             # Reshape 
-            dat = sparse.coo_matrix((np.ravel(dat), 
-                                     (np.repeat(row_idx,dat.shape[1]), 
-                                      np.tile(selection,row_idx.shape[0]))), 
-                                    shape = (ds.shape))
+            dat = sparse.coo_matrix((np.ravel(dat),
+                                     (np.repeat(row_idx, dat.shape[1]),
+                                      np.tile(selection, row_idx.shape[0]))),
+                                    shape=ds.shape)
             # Restrict for easy add
             dat = dat.tocsc()
             new_idx = np.arange(start=start_pos,
-                                  stop = selection[-1]+1,
-                                  step = 1)
-            dat = dat[:,new_idx]
+                                stop=selection[-1] + 1,
+                                step=1)
+            dat = dat[:, new_idx]
             batch_add_sparse(loom_file=tmp_loom,
-                             layers={'':dat},
-                             row_attrs={feat_attr:ds.ra[feat_attr]},
-                             col_attrs={'FakeID':new_idx},
+                             layers={'': dat},
+                             row_attrs={feat_attr: ds.ra[feat_attr]},
+                             col_attrs={'FakeID': new_idx},
                              append=append_loom,
                              empty_base=False,
                              batch_size=batch_size)
-            append_loom=True
+            append_loom = True
             start_pos = selection[-1] + 1
     # Log
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
         help_log.info(
-            'Made temporary loom file in {0:.2f} {1}'.format(time_run, 
+            'Made temporary loom file in {0:.2f} {1}'.format(time_run,
                                                              time_fmt))
     return tmp_loom
 
@@ -809,11 +813,10 @@ def gen_impute_adj(loom_file,
 def gen_impute_knn(loom_target,
                    loom_source,
                    neighbor_attr,
-                   distance_attr,
+                   k,
                    valid_target,
                    valid_source,
                    offset=1e-5,
-                   batch_size=512,
                    verbose=False):
     """
     Generates a restricted knn adjacency matrix from a loom file
@@ -822,19 +825,10 @@ def gen_impute_knn(loom_target,
         loom_target (str): Path to loom file for target modality
         loom_source (str): Path to loom file for source modality
         neighbor_attr (str): Attribute specifying neighbors
-        distance_attr (str): Attribute specifying distances
         k (int): The number of nearest neighbors to restrict to
         valid_target (str): Attribute specifying cells to include in target
         valid_source (str): Attribute specifying cells to include in source
-        constraint_relaxation(float): a ratio determining the number of
-                                    neighbors that can be formed by
-                                    cells in the other modality.
-                                    Increasing it means neighbors can
-                                    be distributed more unevenly among
-                                    cells, one means each cell is used
-                                    equally.
         offset (float): Offset for normalization of adjacency matrix
-        batch_size (int): Size of chunks
         verbose (bool): Print logging messages
 
      Returns:
@@ -859,8 +853,8 @@ def gen_impute_knn(loom_target,
                                           inverse=False)
     # Get adjacency
     adj = gen_impute_adj(loom_file=loom_target,
-                         neighbor_attr=neighbor_target,
-                         k=k_tar_src,
+                         neighbor_attr=neighbor_attr,
+                         k=k,
                          self_idx=self_idx,
                          other_idx=other_idx)
     # Normalize
@@ -1052,7 +1046,6 @@ def add_mat_to_knn(mat,
     return t, new_idx
 
 
-
 def low_mem_distance_index(mat_train,
                            mat_test,
                            k,
@@ -1118,6 +1111,7 @@ def build_knn(t,
         t (object): Annoy index for kNN
         n_trees (int): Number of trees to use for kNN
             More trees leads to higher precision
+        verbose (bool): Print logging messages
 
     Returns:
         t (object): Annoy index for kNN
@@ -1126,6 +1120,7 @@ def build_knn(t,
         help_log.info('Building kNN')
     t.build(n_trees)
     return t
+
 
 def train_knn(loom_file,
               layer,
@@ -1153,6 +1148,7 @@ def train_knn(loom_file,
         remove_version (bool): Remove GENCODE version ID
         seed (int): Seed for annoy
         batch_size (int): Size of chunks for iterating over loom_file
+        verbose (bool): Print logging messages
 
     Returns:
         t (object): Annoy kNN index
@@ -1258,6 +1254,7 @@ def report_knn(loom_file,
     # Return values
     return dist, idx
 
+
 def constrained_one_direction(output_loom,
                               output_index,
                               output_distance,
@@ -1279,7 +1276,10 @@ def constrained_one_direction(output_loom,
                               k,
                               speed_factor,
                               relaxation,
-                              verbose):
+                              n_trees,
+                              seed,
+                              verbose,
+                              remove_version):
     # Start log
     if verbose:
         t0 = time.time()
@@ -1291,27 +1291,27 @@ def constrained_one_direction(output_loom,
     accepted_dist = []
     accepted_cells = []
     rejected_cells = np.where(col_idx_self)[0]
-    k_saturate = int((self_num/other_num)*k*3)+1
+    k_saturate = int((self_num / other_num) * k * relaxation) + 1
     with loompy.connect(loom_other) as ds:
-        n_connects = np.repeat([k_saturate+1],repeats=ds.shape[1])
+        n_connects = np.repeat([k_saturate + 1], repeats=ds.shape[1])
     n_connects[col_idx_other] = 0
-    unsaturated = (n_connects < k_saturate) 
+    unsaturated = (n_connects < k_saturate)
     unsaturated_cells = np.where(unsaturated)[0]
     # Perform search
     while rejected_cells.size != 0:
-        # Get a radom selection of cells
+        # Get a random selection of cells
         np.random.shuffle(rejected_cells)
         # Train the kNN
         t = train_knn(loom_file=loom_other,
-                          layer=layer_other,
-                          row_arr=row_idx_other,
-                          col_arr=unsaturated_cells,
-                          feat_attr=feature_id_other,
-                          feat_select=feat_select,
-                          reverse_rank=reverse_other,
-                          remove_version=remove_version,
-                          seed=seed,
-                          batch_size=batch_other,
+                      layer=layer_other,
+                      row_arr=row_idx_other,
+                      col_arr=unsaturated_cells,
+                      feat_attr=feature_id_other,
+                      feat_select=feat_select,
+                      reverse_rank=reverse_other,
+                      remove_version=remove_version,
+                      seed=seed,
+                      batch_size=batch_other,
                       verbose=verbose)
         # Build the kNN
         t = build_knn(t=t,
@@ -1325,7 +1325,8 @@ def constrained_one_direction(output_loom,
                                feat_attr=feature_id_self,
                                feat_select=feat_select,
                                reverse_rank=reverse_self,
-                               k=min(k*speed_factor,unsaturated_cells.shape[0]),
+                               k=min(k * speed_factor,
+                                     unsaturated_cells.shape[0]),
                                t=t,
                                batch_size=batch_self,
                                remove_version=remove_version,
@@ -1335,8 +1336,8 @@ def constrained_one_direction(output_loom,
         rejected_local_idx = []
         for local_idx, cell in enumerate(rejected_cells):
             # Get all neighbors
-            tmp_idx = idx[cell,:]
-            tmp_dist = dist[cell,:]
+            tmp_idx = idx[cell, :]
+            tmp_dist = dist[cell, :]
             # Remove saturated
             unsat_idx = unsaturated[tmp_idx]
             tmp_idx = tmp_idx[unsat_idx]
@@ -1348,8 +1349,8 @@ def constrained_one_direction(output_loom,
                 accepted_idx.append(tmp_idx[:k])
                 accepted_dist.append(tmp_dist[:k])
                 accepted_cells.append(cell)
-                n_connects[tmp_idx[:k]] += 1 
-                unsaturated = (n_connects < k_saturate) # unsaturated bool
+                n_connects[tmp_idx[:k]] += 1
+                unsaturated = (n_connects < k_saturate)  # unsaturated bool
         # Prep for next while loop
         unsaturated_cells = np.where(unsaturated)[0]
         rejected_cells = rejected_cells[rejected_local_idx]
@@ -1364,14 +1365,14 @@ def constrained_one_direction(output_loom,
         accepted_idx = accepted_idx.fillna(value=0)
         accepted_dist = accepted_dist.fillna(value=0)
     with loompy.connect(filename=output_loom) as ds:
-            ds.ca[output_distance] = accepted_dist
-            ds.ca[output_index] = accepted_index
+        ds.ca[output_distance] = accepted_dist
+        ds.ca[output_index] = accepted_idx
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
         help_log.info(
             'Found neighbors for {0} in {1:.2f} {2}'.format(output_loom,
-                                                            time_run, 
+                                                            time_run,
                                                             time_fmt))
 
 
@@ -1440,18 +1441,18 @@ def get_constrained_knn(loom_x,
         raise ValueError('Unsupported direction value')
     # Make temporary files holding z-scores
     tmp_x = temp_zscore_loom(loom_file=loom_x,
-                         raw_layer=layer_x,
-                         feat_attr=feature_id_x,
-                         valid_ca = valid_ca_x,
-                         valid_ra = valid_ra_x,
-                         batch_size=batch_x,
-                         tmp_dir=None,
+                             raw_layer=layer_x,
+                             feat_attr=feature_id_x,
+                             valid_ca=valid_ca_x,
+                             valid_ra=valid_ra_x,
+                             batch_size=batch_x,
+                             tmp_dir=None,
                              verbose=verbose)
     tmp_y = temp_zscore_loom(loom_file=loom_y,
                              raw_layer=layer_y,
                              feat_attr=feature_id_y,
-                             valid_ca = valid_ca_y,
-                             valid_ra = valid_ra_y,
+                             valid_ca=valid_ca_y,
+                             valid_ra=valid_ra_y,
                              batch_size=batch_y,
                              tmp_dir=None,
                              verbose=verbose)
@@ -1474,9 +1475,12 @@ def get_constrained_knn(loom_x,
                               reverse_other=reverse_y,
                               batch_other=batch_y,
                               feat_select=x_feat,
+                              n_trees=n_trees,
+                              seed=seed,
                               k=max_k_x,
                               speed_factor=speed_factor,
                               relaxation=relaxation,
+                              remove_version=remove_version,
                               verbose=verbose)
     # Perform constrained kNN for y
     constrained_one_direction(output_loom=loom_y,
@@ -1497,37 +1501,41 @@ def get_constrained_knn(loom_x,
                               reverse_other=reverse_x,
                               batch_other=batch_x,
                               feat_select=x_feat,
+                              n_trees=n_trees,
+                              seed=seed,
                               k=max_k_y,
                               speed_factor=speed_factor,
                               relaxation=relaxation,
+                              remove_version=remove_version,
                               verbose=verbose)
     # Remove temporary files
     os.remove(tmp_x)
     os.remove(tmp_y)
-    
+
+
 def get_knn_for_mnn(loom_x,
-                     layer_x,
-                     neighbor_distance_x,
-                     neighbor_index_x,
-                     max_k_x,
-                     loom_y,
-                     layer_y,
-                     neighbor_distance_y,
-                     neighbor_index_y,
-                     max_k_y,
-                     direction,
-                     feature_id_x,
-                     feature_id_y,
-                     valid_ca_x=None,
-                     valid_ra_x=None,
-                     valid_ca_y=None,
-                     valid_ra_y=None,
-                     n_trees=10,
-                     seed=None,
-                     batch_x=512,
-                     batch_y=512,
-                     remove_version=False,
-                     verbose=False):
+                    layer_x,
+                    neighbor_distance_x,
+                    neighbor_index_x,
+                    max_k_x,
+                    loom_y,
+                    layer_y,
+                    neighbor_distance_y,
+                    neighbor_index_y,
+                    max_k_y,
+                    direction,
+                    feature_id_x,
+                    feature_id_y,
+                    valid_ca_x=None,
+                    valid_ra_x=None,
+                    valid_ca_y=None,
+                    valid_ra_y=None,
+                    n_trees=10,
+                    seed=None,
+                    batch_x=512,
+                    batch_y=512,
+                    remove_version=False,
+                    verbose=False):
     """
     Gets kNN distances and indices by iterating over a loom file
 
@@ -1609,18 +1617,18 @@ def get_knn_for_mnn(loom_x,
         raise ValueError('Unsupported direction value')
     # Make temporary files holding zscores
     tmp_x = temp_zscore_loom(loom_file=loom_x,
-                         raw_layer=layer_x,
-                         feat_attr=feature_id_x,
-                         valid_ca = valid_ca_x,
-                         valid_ra = valid_ra_x,
-                         batch_size=batch_x,
-                         tmp_dir=None,
+                             raw_layer=layer_x,
+                             feat_attr=feature_id_x,
+                             valid_ca=valid_ca_x,
+                             valid_ra=valid_ra_x,
+                             batch_size=batch_x,
+                             tmp_dir=None,
                              verbose=verbose)
     tmp_y = temp_zscore_loom(loom_file=loom_y,
                              raw_layer=layer_y,
                              feat_attr=feature_id_y,
-                             valid_ca = valid_ca_y,
-                             valid_ra = valid_ra_y,
+                             valid_ca=valid_ca_y,
+                             valid_ra=valid_ra_y,
                              batch_size=batch_y,
                              tmp_dir=None,
                              verbose=verbose)
@@ -1856,7 +1864,6 @@ def impute_data(loom_source,
                 id_target,
                 cell_target,
                 feat_target,
-                neighbor_distance_target,
                 neighbor_index_target,
                 neighbor_index_source,
                 k_src_tar,
@@ -1866,7 +1873,6 @@ def impute_data(loom_source,
                 epsilon,
                 pca_attr,
                 neighbor_method='rescue',
-                constraint_relaxation=1.1,
                 remove_version=False,
                 offset=1e-5,
                 seed=None,
@@ -1887,7 +1893,6 @@ def impute_data(loom_source,
         id_target (str): Row attribute specifying unique feature IDs
         cell_target (str): Column attribute specifying columns to include
         feat_target (str): Row attribute specifying rows to include
-        neighbor_distance_target (str): Attribute containing distances for MNNs
         neighbor_index_target (str): Attribute containing indices for MNNs
         neighbor_index_source (str): Attribute containing indices for MNNs
         k_src_tar (int): Number of nearest neighbors for MNNs
@@ -1900,11 +1905,6 @@ def impute_data(loom_source,
             rescue - include cells that did not make MNNs
             mnn - only include cells that made MNNs
             knn - use a restricted knn search to find neighbors
-        constraint_relaxation(float): ratio determining the number of neighbors
-            that can be formed by cells in the other modality.
-            Increasing it means neighbors can be distributed more unevenly among
-            cells, one means each cell is used equally.
-            Used for neighbor_method == knn
         remove_version (bool): Remove GENCODE version numbers from IDs
         offset (float): Offset for Markov normalization
         seed (int): Seed for Annoy
@@ -1981,11 +1981,9 @@ def impute_data(loom_source,
         w_use = gen_impute_knn(loom_target=loom_target,
                                loom_source=loom_source,
                                neighbor_attr=neighbor_index_target,
-                               distance_attr=neighbor_distance_target,
                                valid_target=cell_target,
                                valid_source=cell_source,
-                               offset=offset,
-                               batch_size=batch_target,
+                               k=k_tar_src,
                                verbose=verbose)
     else:
         raise ValueError('Unsupported neighbor method')
@@ -2034,7 +2032,6 @@ def loop_impute_data(loom_source,
                      id_target,
                      cell_target,
                      feat_target,
-                     neighbor_distance_target,
                      neighbor_index_target,
                      neighbor_index_source,
                      k_src_tar,
@@ -2044,7 +2041,6 @@ def loop_impute_data(loom_source,
                      epsilon,
                      pca_attr,
                      neighbor_method='rescue',
-                     constraint_relaxation=1.1,
                      remove_version=False,
                      offset=1e-5,
                      seed=None,
@@ -2064,8 +2060,6 @@ def loop_impute_data(loom_source,
         id_target (str): Row attribute specifying unique feature IDs
         cell_target (str): Column attribute specifying columns to include
         feat_target (str): Row attribute specifying rows to include
-        neighbor_distance_target (str): Attribute containing distances for MNNs
-            corr_dist from prep_imputation
         neighbor_index_target (str): Attribute containing indices for MNNs
             corr_idx from prep_imputation
         neighbor_index_source (str): Attribute containing indices for MNNs
@@ -2080,11 +2074,6 @@ def loop_impute_data(loom_source,
             rescue - include cells that did not make MNNs
             mnn - only include cells that made MNNs
             knn - use a restricted knn search to find neighbors
-        constraint_relaxation(float): used for knn imputation
-            a ratio determining the number of neighbors that can be
-            formed by cells in the other dataset. Increasing it means
-            neighbors can be distributed more unevenly among cells,
-            one means each cell is used equally.
         remove_version (bool): Remove GENCODE version numbers from IDs
         offset (float): Offset for Markov normalization
         seed (int): Seed for Annoy
@@ -2108,7 +2097,6 @@ def loop_impute_data(loom_source,
                         id_target=id_target,
                         cell_target=cell_target,
                         feat_target=feat_target,
-                        neighbor_distance_target=neighbor_distance_target,
                         neighbor_index_target=neighbor_index_target,
                         neighbor_index_source=neighbor_index_source,
                         k_src_tar=k_src_tar,
@@ -2118,7 +2106,6 @@ def loop_impute_data(loom_source,
                         epsilon=epsilon,
                         pca_attr=pca_attr,
                         neighbor_method=neighbor_method,
-                        constraint_relaxation=constraint_relaxation,
                         remove_version=remove_version,
                         offset=offset,
                         seed=seed,
@@ -2136,7 +2123,6 @@ def loop_impute_data(loom_source,
                     id_target=id_target,
                     cell_target=cell_target,
                     feat_target=feat_target,
-                    neighbor_distance_target=neighbor_distance_target,
                     neighbor_index_target=neighbor_index_target,
                     neighbor_index_source=neighbor_index_source,
                     k_src_tar=k_src_tar,
@@ -2146,7 +2132,6 @@ def loop_impute_data(loom_source,
                     epsilon=epsilon,
                     pca_attr=pca_attr,
                     neighbor_method=neighbor_method,
-                    constraint_relaxation=constraint_relaxation,
                     remove_version=remove_version,
                     offset=offset,
                     batch_target=batch_target,
