@@ -12,6 +12,8 @@ import pandas as pd
 import time
 from scipy import sparse
 from scipy.stats import zscore
+import tempfile
+import os
 import functools
 import logging
 from numba import jit
@@ -92,6 +94,64 @@ def prep_pca(view,
 
 
 # Imputation helpers
+def batch_add_sparse(loom_file,
+                     layers,
+                     row_attrs,
+                     col_attrs,
+                     append=False,
+                     empty_base=False,
+                     batch_size=512):
+    """
+    Batch adds sparse matrices to a loom file
+
+    Args:
+        loom_file (str): Path to output loom file
+        layers (dict): Keys are names of layers, values are matrices to include
+            Matrices should be features by observations
+        row_attrs (dict): Attributes for rows in loom file
+        col_attrs (dict): Attributes for columns in loom file
+        append (bool): If true, append new cells. If false, overwrite file
+        empty_base (bool): If true, add an empty array to the base layer
+        batch_size (int): Size of batches of cells to add
+    """
+    # Check layers
+    feats = set([])
+    obs = set([])
+    for key in layers:
+        if not sparse.issparse(layers[key]):
+            raise ValueError('Expects sparse matrix input')
+        feats.add(layers[key].shape[0])
+        obs.add(layers[key].shape[1])
+    if len(feats) != 1 or len(obs) != 1:
+        raise ValueError('Matrix dimension mismatch')
+    # Get size of batches
+    obs_size = list(obs)[0]
+    feat_size = list(feats)[0]
+    batches = np.array_split(np.arange(start=0,
+                                       stop=obs_size,
+                                       step=1),
+                             np.ceil(obs_size / batch_size))
+    for batch in batches:
+        batch_layer = dict()
+        if empty_base:
+            batch_layer[''] = np.zeros((feat_size, batch.shape[0]), dtype=int)
+        for key in layers:
+            batch_layer[key] = layers[key].tocsc()[:, batch].toarray()
+        batch_col = dict()
+        for key in col_attrs:
+            batch_col[key] = col_attrs[key][batch]
+        if append:
+            with loompy.connect(filename=loom_file) as ds:
+                ds.add_columns(layers=batch_layer,
+                               row_attrs=row_attrs,
+                               col_attrs=batch_col)
+        else:
+            loompy.create(filename=loom_file,
+                          layers=batch_layer,
+                          row_attrs=row_attrs,
+                          col_attrs=batch_col)
+            append = True
+
 def auto_find_mutual_k(loom_file,
                        valid_ca=None,
                        verbose=False):
@@ -612,63 +672,72 @@ def find_common_features(loom_x,
                                                         num_val=num_comm,
                                                         columns=False),
                                      loom_y))
-
-
-@jit
-def constrained_knn_search(distance_arr,
-                           neighbor_arr,
-                           num_other,
-                           j_max,
-                           saturated=None,
-                           k=10):
-    """
-    Gets the top K neighbors in the other modality using a
-    constrained search
-
-    This is a buggy-implementation, a more accurate version is coming soon
-
-    Args:
-        distance_arr (ndarray): Distances between elements
-        neighbor_arr (ndarray): Index of neighbors
-        num_other (int): Number of output column in adjacency matrix
-        j_max (int): the maximum number of neighbors cells in the
-            other modality can make with these cells
-        saturated (array-like): cells in the other modality that are
-            removed due to saturation constraint
-        constraint relaxation(float): a ratio determining the number of
-             neighbors that can be formed by cells in the other modality.
-             Increasing it means neighbors can be distributed more
-             unevenly among cells, one means each cell is used equally.
-
-        k (int): The number of nearest neighbors to restrict to
-
-    Returns
-        knn (sparse matrix): the top k constrained neighbors for each cell
-
-    """
-
-    num_arr = neighbor_arr.shape[0]
-    knn = np.zeros((num_arr, num_other))
-    random_order = np.random.choice(range(neighbor_arr.shape[0]),
-                                    size=neighbor_arr.shape[0],
-                                    replace=False)
-    if saturated is None:
-        saturated = []
-    else:
-        to_drop = np.where(np.isin(neighbor_arr, saturated))
-        distance_arr[to_drop[0], to_drop[1]] = np.inf
-    # POSSIBLE BUG: neighbor is based on all cells not just valid cells
-    for _i in np.arange(k):  # get the ith nearest neighbor in the other dataset
-        for cell in random_order:  # loop over all cells in rows
-            j = distance_arr[cell, :].argmin()
-            neighbor_idx = neighbor_arr[cell, j]
-            knn[cell, neighbor_idx] = 1
-            distance_arr[cell, j] = np.inf
-            if np.sum(knn[:, neighbor_idx]) > j_max:
-                to_drop = np.where(neighbor_arr == neighbor_idx)
-                distance_arr[to_drop[0], to_drop[1]] = np.inf
-                saturated.append(neighbor_idx)
-    return sparse.lil_matrix(knn), saturated
+def temp_zscore_loom(loom_file,
+                     raw_layer,
+                     feat_attr='Accession',
+                     valid_ca = None,
+                     valid_ra = None,
+                     batch_size=512,
+                     tmp_dir=None,
+                     verbose=False):
+    if verbose:
+        t0 = time.time()
+        help_log.info('Generating temporary z-scored file for {}'.format(loom_file))
+    # Prep
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ca,
+                                        columns=True,
+                                        as_bool=False,
+                                        inverse=False)
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ra,
+                                        columns=False,
+                                        as_bool=False,
+                                        inverse=False)
+    layers = loom_utils.make_layer_list(raw_layer)
+    append_loom=False
+    start_pos=0
+    # Make temporary loom file
+    if tmp_dir is None:
+        tmp_dir = tempfile.gettempdir()
+    tmp_loom = tempfile.mktemp(suffix='.loom',dir=tmp_dir)
+    with loompy.connect(filename=loom_file, mode='r+') as ds:
+        for (_, selection, view) in ds.scan(axis=1,
+                                            items=col_idx,
+                                            layers=layers,
+                                            batch_size=batch_size):
+            # Get zscore
+            dat = pd.DataFrame(view.layers[raw_layer][row_idx, :].T)
+            dat = pd.DataFrame(dat).rank(pct=True, axis=1)
+            dat = dat.apply(zscore, axis=1, result_type='expand').values.T
+            # Reshape 
+            dat = sparse.coo_matrix((np.ravel(dat), 
+                                     (np.repeat(row_idx,dat.shape[1]), 
+                                      np.tile(selection,row_idx.shape[0]))), 
+                                    shape = (ds.shape))
+            # Restrict for easy add
+            dat = dat.tocsc()
+            new_idx = np.arange(start=start_pos,
+                                  stop = selection[-1]+1,
+                                  step = 1)
+            dat = dat[:,new_idx]
+            batch_add_sparse(loom_file=tmp_loom,
+                             layers={'':dat},
+                             row_attrs={feat_attr:ds.ra[feat_attr]},
+                             col_attrs={'FakeID':new_idx},
+                             append=append_loom,
+                             empty_base=False,
+                             batch_size=batch_size)
+            append_loom=True
+            start_pos = selection[-1] + 1
+    # Log
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        help_log.info(
+            'Made temporary loom file in {0:.2f} {1}'.format(time_run, 
+                                                             time_fmt))
+    return tmp_loom
 
 
 def normalize_adj(adj_mtx,
@@ -743,8 +812,6 @@ def gen_impute_knn(loom_target,
                    distance_attr,
                    valid_target,
                    valid_source,
-                   k=10,
-                   constraint_relaxation=1.1,
                    offset=1e-5,
                    batch_size=512,
                    verbose=False):
@@ -779,6 +846,7 @@ def gen_impute_knn(loom_target,
         log_message = 'Generating restricted KNN adjacency matrix k={}'.format(
             k)
         help_log.info(log_message)
+    # Get indices
     self_idx = loom_utils.get_attr_index(loom_file=loom_target,
                                          attr=valid_target,
                                          columns=True,
@@ -789,32 +857,12 @@ def gen_impute_knn(loom_target,
                                           columns=True,
                                           as_bool=True,
                                           inverse=False)
-    num_other = other_idx.astype(int).sum()
-    constraint = np.ceil(
-        (k * constraint_relaxation * self_idx.astype(int).sum()) / num_other)
-    if verbose:
-        log_message = 'Other cells are constrained to {} neighbors'.format(
-            constraint)
-        help_log.info(log_message)
-    adj = []
-    with loompy.connect(filename=loom_target, mode='r') as ds:
-        saturated = None
-        for (_, selection, view) in ds.scan(axis=1,
-                                            layers=[''],
-                                            items=self_idx,
-                                            batch_size=batch_size):
-            knn, saturated = constrained_knn_search(
-                distance_arr=view.ca[distance_attr],
-                neighbor_arr=view.ca[neighbor_attr],
-                saturated=saturated,
-                num_other=other_idx.shape[0],
-                j_max=constraint,
-                k=k)
-            adj.append(knn)
-    # Make matrices
-    adj = sparse.vstack(adj)
-    adj = adj.tocsc()[:, other_idx].tocsr()
-
+    # Get adjacency
+    adj = gen_impute_adj(loom_file=loom_target,
+                         neighbor_attr=neighbor_target,
+                         k=k_tar_src,
+                         self_idx=self_idx,
+                         other_idx=other_idx)
     # Normalize
     adj = normalize_adj(adj_mtx=adj,
                         axis=1,
@@ -1004,22 +1052,6 @@ def add_mat_to_knn(mat,
     return t, new_idx
 
 
-def build_knn(t,
-              n_trees=10):
-    """
-    Builds a forest of tress for kNN
-
-    Args:
-        t (object): Annoy index for kNN
-        n_trees (int): Number of trees to use for kNN
-            More trees leads to higher precision
-
-    Returns:
-        t (object): Annoy index for kNN
-    """
-    t.build(n_trees)
-    return t
-
 
 def low_mem_distance_index(mat_train,
                            mat_test,
@@ -1076,6 +1108,25 @@ def low_mem_distance_index(mat_train,
     return knn_res
 
 
+def build_knn(t,
+              n_trees=10,
+              verbose=False):
+    """
+    Builds a forest of tress for kNN
+
+    Args:
+        t (object): Annoy index for kNN
+        n_trees (int): Number of trees to use for kNN
+            More trees leads to higher precision
+
+    Returns:
+        t (object): Annoy index for kNN
+    """
+    if verbose:
+        help_log.info('Building kNN')
+    t.build(n_trees)
+    return t
+
 def train_knn(loom_file,
               layer,
               row_arr,
@@ -1085,7 +1136,8 @@ def train_knn(loom_file,
               reverse_rank,
               remove_version,
               seed,
-              batch_size):
+              batch_size,
+              verbose):
     """
     Trains a kNN using loom data in batches
 
@@ -1105,6 +1157,8 @@ def train_knn(loom_file,
     Returns:
         t (object): Annoy kNN index
     """
+    if verbose:
+        help_log.info('Training kNN')
     # Prepare kNN object
     t = prep_knn_object(num_dim=feat_select.shape[0],
                         metric='dot',
@@ -1123,9 +1177,7 @@ def train_knn(loom_file,
                                columns=view.ra[feat_attr][row_arr])
             if remove_version:
                 dat.columns = general_utils.remove_gene_version(dat.columns)
-            dat = dat.loc[:, feat_select]
-            dat = pd.DataFrame(dat).rank(pct=True, axis=1)
-            dat = dat.apply(zscore, axis=1, result_type='expand').values
+            dat = dat.loc[:, feat_select].values
             if reverse_rank:
                 dat = -1 * dat
             # Add to kNN
@@ -1171,6 +1223,8 @@ def report_knn(loom_file,
         dist (ndarray): Array of distances for kNN
         idx (ndarray): Array of indices for kNN
     """
+    if verbose:
+        help_log.info('Querying kNN')
     # Make distance and index arrays
     with loompy.connect(loom_file) as ds:
         num_cells = ds.shape[1]
@@ -1189,11 +1243,7 @@ def report_knn(loom_file,
                                columns=view.ra[feat_attr][row_arr])
             if remove_version:
                 dat.columns = general_utils.remove_gene_version(dat.columns)
-            dat = dat.loc[:, feat_select]
-            dat = pd.DataFrame(dat).rank(pct=True, axis=1)
-            dat = dat.apply(zscore,
-                            axis=1,
-                            result_type='expand').values
+            dat = dat.loc[:, feat_select].values
             if reverse_rank:
                 dat = -1 * dat
             # Get distances and indices
@@ -1208,8 +1258,254 @@ def report_knn(loom_file,
     # Return values
     return dist, idx
 
+def constrained_one_direction(output_loom,
+                              output_index,
+                              output_distance,
+                              loom_self,
+                              layer_self,
+                              col_idx_self,
+                              row_idx_self,
+                              feature_id_self,
+                              reverse_self,
+                              batch_self,
+                              loom_other,
+                              layer_other,
+                              col_idx_other,
+                              row_idx_other,
+                              feature_id_other,
+                              reverse_other,
+                              batch_other,
+                              feat_select,
+                              k,
+                              speed_factor,
+                              relaxation,
+                              verbose):
+    # Start log
+    if verbose:
+        t0 = time.time()
+        help_log.info('Finding neighbors for {0}'.format(output_loom))
+    # Prepare for kNN search
+    self_num = np.sum(col_idx_self)
+    other_num = np.sum(col_idx_other)
+    accepted_idx = []
+    accepted_dist = []
+    accepted_cells = []
+    rejected_cells = np.where(col_idx_self)[0]
+    k_saturate = int((self_num/other_num)*k*3)+1
+    with loompy.connect(loom_other) as ds:
+        n_connects = np.repeat([k_saturate+1],repeats=ds.shape[1])
+    n_connects[col_idx_other] = 0
+    unsaturated = (n_connects < k_saturate) 
+    unsaturated_cells = np.where(unsaturated)[0]
+    # Perform search
+    while rejected_cells.size != 0:
+        # Get a radom selection of cells
+        np.random.shuffle(rejected_cells)
+        # Train the kNN
+        t = train_knn(loom_file=loom_other,
+                          layer=layer_other,
+                          row_arr=row_idx_other,
+                          col_arr=unsaturated_cells,
+                          feat_attr=feature_id_other,
+                          feat_select=feat_select,
+                          reverse_rank=reverse_other,
+                          remove_version=remove_version,
+                          seed=seed,
+                          batch_size=batch_other,
+                      verbose=verbose)
+        # Build the kNN
+        t = build_knn(t=t,
+                      n_trees=n_trees,
+                      verbose=verbose)
+        # Query the kNN
+        dist, idx = report_knn(loom_file=loom_self,
+                               layer=layer_self,
+                               row_arr=row_idx_self,
+                               col_arr=rejected_cells,
+                               feat_attr=feature_id_self,
+                               feat_select=feat_select,
+                               reverse_rank=reverse_self,
+                               k=min(k*speed_factor,unsaturated_cells.shape[0]),
+                               t=t,
+                               batch_size=batch_self,
+                               remove_version=remove_version,
+                               verbose=verbose)
+        # Reindex values
+        idx = unsaturated_cells[idx.astype(int)]
+        rejected_local_idx = []
+        for local_idx, cell in enumerate(rejected_cells):
+            # Get all neighbors
+            tmp_idx = idx[cell,:]
+            tmp_dist = dist[cell,:]
+            # Remove saturated
+            unsat_idx = unsaturated[tmp_idx]
+            tmp_idx = tmp_idx[unsat_idx]
+            tmp_dist = tmp_dist[unsat_idx]
+            # Determine if rejecting or accepting
+            if tmp_idx.size < k:
+                rejected_local_idx.append(local_idx)
+            else:
+                accepted_idx.append(tmp_idx[:k])
+                accepted_dist.append(tmp_dist[:k])
+                accepted_cells.append(cell)
+                n_connects[tmp_idx[:k]] += 1 
+                unsaturated = (n_connects < k_saturate) # unsaturated bool
+        # Prep for next while loop
+        unsaturated_cells = np.where(unsaturated)[0]
+        rejected_cells = rejected_cells[rejected_local_idx]
+    # Get final indices
+    accepted_idx = pd.DataFrame(np.vstack(accepted_idx), index=accepted_cells)
+    accepted_idx = accepted_idx.sort_index()
+    accepted_dist = pd.DataFrame(np.vstack(accepted_dist), index=accepted_cells)
+    accepted_dist = accepted_dist.loc[accepted_idx.index]
+    with loompy.connect(loom_self) as ds:
+        accepted_idx = accepted_idx.reindex(np.arange(ds.shape[1]))
+        accepted_dist = accepted_dist.reindex(np.arange(ds.shape[1]))
+        accepted_idx = accepted_idx.fillna(value=0)
+        accepted_dist = accepted_dist.fillna(value=0)
+    with loompy.connect(filename=output_loom) as ds:
+            ds.ca[output_distance] = accepted_dist
+            ds.ca[output_index] = accepted_index
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        help_log.info(
+            'Found neighbors for {0} in {1:.2f} {2}'.format(output_loom,
+                                                            time_run, 
+                                                            time_fmt))
 
-def perform_loom_knn(loom_x,
+
+def get_constrained_knn(loom_x,
+                        layer_x,
+                        neighbor_distance_x,
+                        neighbor_index_x,
+                        max_k_x,
+                        loom_y,
+                        layer_y,
+                        neighbor_distance_y,
+                        neighbor_index_y,
+                        max_k_y,
+                        direction,
+                        feature_id_x,
+                        feature_id_y,
+                        valid_ca_x=None,
+                        valid_ra_x=None,
+                        valid_ca_y=None,
+                        valid_ra_y=None,
+                        relaxation=1.1,
+                        speed_factor=10,
+                        n_trees=10,
+                        seed=None,
+                        batch_x=512,
+                        batch_y=512,
+                        remove_version=False,
+                        verbose=False):
+    # Check inputs
+    col_x = loom_utils.get_attr_index(loom_file=loom_x,
+                                      attr=valid_ca_x,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_x = loom_utils.get_attr_index(loom_file=loom_x,
+                                      attr=valid_ra_x,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    col_y = loom_utils.get_attr_index(loom_file=loom_y,
+                                      attr=valid_ca_y,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_y = loom_utils.get_attr_index(loom_file=loom_y,
+                                      attr=valid_ra_y,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    with loompy.connect(filename=loom_x) as ds_x:
+        x_feat = ds_x.ra[feature_id_x][row_x]
+    with loompy.connect(filename=loom_y) as ds_y:
+        y_feat = ds_y.ra[feature_id_y][row_y]
+    if remove_version:
+        x_feat = general_utils.remove_gene_version(x_feat)
+        y_feat = general_utils.remove_gene_version(y_feat)
+    if np.any(np.sort(x_feat) != np.sort(y_feat)):
+        raise ValueError('Feature mismatch!')
+    # Get direction
+    reverse_y = False
+    if direction == '+' or direction == 'positive':
+        reverse_x = False
+    elif direction == '-' or direction == 'negative':
+        reverse_x = True
+    else:
+        raise ValueError('Unsupported direction value')
+    # Make temporary files holding z-scores
+    tmp_x = temp_zscore_loom(loom_file=loom_x,
+                         raw_layer=layer_x,
+                         feat_attr=feature_id_x,
+                         valid_ca = valid_ca_x,
+                         valid_ra = valid_ra_x,
+                         batch_size=batch_x,
+                         tmp_dir=None,
+                             verbose=verbose)
+    tmp_y = temp_zscore_loom(loom_file=loom_y,
+                             raw_layer=layer_y,
+                             feat_attr=feature_id_y,
+                             valid_ca = valid_ca_y,
+                             valid_ra = valid_ra_y,
+                             batch_size=batch_y,
+                             tmp_dir=None,
+                             verbose=verbose)
+    # Perform constrained kNN for x
+    constrained_one_direction(output_loom=loom_x,
+                              output_index=neighbor_index_x,
+                              output_distance=neighbor_distance_x,
+                              loom_self=tmp_x,
+                              layer_self='',
+                              col_idx_self=col_x,
+                              row_idx_self=row_x,
+                              feature_id_self=feature_id_x,
+                              reverse_self=reverse_x,
+                              batch_self=batch_x,
+                              loom_other=tmp_y,
+                              layer_other='',
+                              col_idx_other=col_y,
+                              row_idx_other=row_y,
+                              feature_id_other=feature_id_y,
+                              reverse_other=reverse_y,
+                              batch_other=batch_y,
+                              feat_select=x_feat,
+                              k=max_k_x,
+                              speed_factor=speed_factor,
+                              relaxation=relaxation,
+                              verbose=verbose)
+    # Perform constrained kNN for y
+    constrained_one_direction(output_loom=loom_y,
+                              output_index=neighbor_index_y,
+                              output_distance=neighbor_distance_y,
+                              loom_self=tmp_y,
+                              layer_self='',
+                              col_idx_self=col_y,
+                              row_idx_self=row_y,
+                              feature_id_self=feature_id_y,
+                              reverse_self=reverse_y,
+                              batch_self=batch_y,
+                              loom_other=tmp_x,
+                              layer_other='',
+                              col_idx_other=col_x,
+                              row_idx_other=row_x,
+                              feature_id_other=feature_id_x,
+                              reverse_other=reverse_x,
+                              batch_other=batch_x,
+                              feat_select=x_feat,
+                              k=max_k_y,
+                              speed_factor=speed_factor,
+                              relaxation=relaxation,
+                              verbose=verbose)
+    # Remove temporary files
+    os.remove(tmp_x)
+    os.remove(tmp_y)
+    
+def get_knn_for_mnn(loom_x,
                      layer_x,
                      neighbor_distance_x,
                      neighbor_index_x,
@@ -1304,7 +1600,6 @@ def perform_loom_knn(loom_x,
         y_feat = general_utils.remove_gene_version(y_feat)
     if np.any(np.sort(x_feat) != np.sort(y_feat)):
         raise ValueError('Feature mismatch!')
-    # Train kNNs
     reverse_y = False
     if direction == '+' or direction == 'positive':
         reverse_x = False
@@ -1312,8 +1607,26 @@ def perform_loom_knn(loom_x,
         reverse_x = True
     else:
         raise ValueError('Unsupported direction value')
-    t_y2x = train_knn(loom_file=loom_x,
-                      layer=layer_x,
+    # Make temporary files holding zscores
+    tmp_x = temp_zscore_loom(loom_file=loom_x,
+                         raw_layer=layer_x,
+                         feat_attr=feature_id_x,
+                         valid_ca = valid_ca_x,
+                         valid_ra = valid_ra_x,
+                         batch_size=batch_x,
+                         tmp_dir=None,
+                             verbose=verbose)
+    tmp_y = temp_zscore_loom(loom_file=loom_y,
+                             raw_layer=layer_y,
+                             feat_attr=feature_id_y,
+                             valid_ca = valid_ca_y,
+                             valid_ra = valid_ra_y,
+                             batch_size=batch_y,
+                             tmp_dir=None,
+                             verbose=verbose)
+    # Train kNN
+    t_y2x = train_knn(loom_file=tmp_x,
+                      layer='',
                       row_arr=row_x,
                       col_arr=col_x,
                       feat_attr=feature_id_x,
@@ -1321,9 +1634,10 @@ def perform_loom_knn(loom_x,
                       reverse_rank=reverse_x,
                       remove_version=remove_version,
                       seed=seed,
-                      batch_size=batch_x)
-    t_x2y = train_knn(loom_file=loom_y,
-                      layer=layer_y,
+                      batch_size=batch_x,
+                      verbose=verbose)
+    t_x2y = train_knn(loom_file=tmp_y,
+                      layer='',
                       row_arr=row_y,
                       col_arr=col_y,
                       feat_attr=feature_id_y,
@@ -1331,15 +1645,18 @@ def perform_loom_knn(loom_x,
                       reverse_rank=reverse_y,
                       remove_version=remove_version,
                       seed=seed,
-                      batch_size=batch_y)
+                      batch_size=batch_y,
+                      verbose=verbose)
     # Build trees
     t_x2y = build_knn(t=t_x2y,
-                      n_trees=n_trees)
+                      n_trees=n_trees,
+                      verbose=verbose)
     t_y2x = build_knn(t=t_y2x,
-                      n_trees=n_trees)
+                      n_trees=n_trees,
+                      verbose=verbose)
     # Get distances and indices
-    dist_x, idx_x = report_knn(loom_file=loom_x,
-                               layer=layer_x,
+    dist_x, idx_x = report_knn(loom_file=tmp_x,
+                               layer='',
                                row_arr=row_x,
                                col_arr=col_x,
                                feat_attr=feature_id_x,
@@ -1350,8 +1667,8 @@ def perform_loom_knn(loom_x,
                                batch_size=batch_x,
                                remove_version=remove_version,
                                verbose=verbose)
-    dist_y, idx_y = report_knn(loom_file=loom_y,
-                               layer=layer_y,
+    dist_y, idx_y = report_knn(loom_file=tmp_y,
+                               layer='',
                                row_arr=row_y,
                                col_arr=col_y,
                                feat_attr=feature_id_y,
@@ -1374,6 +1691,9 @@ def perform_loom_knn(loom_x,
     with loompy.connect(filename=loom_y) as ds:
         ds.ca[neighbor_distance_y] = dist_y
         ds.ca[neighbor_index_y] = correct_idx_y
+    # Remove temporary files
+    os.remove(tmp_x)
+    os.remove(tmp_y)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
@@ -1560,280 +1880,4 @@ def impute_data(loom_source,
         loom_source (str): Name of loom file that contains observed count data
         layer_source (str/list): Layer(s) containing observed count data
         id_source (str): Row attribute specifying unique feature IDs
-        cell_source (str): Column attribute specifying columns to include
-        feat_source (str): Row attribute specifying rows to include
-        loom_target (str): Name of loom file that will receive imputed counts
-        layer_target (str/list): Layer(s) that will contain imputed count data
-        id_target (str): Row attribute specifying unique feature IDs
-        cell_target (str): Column attribute specifying columns to include
-        feat_target (str): Row attribute specifying rows to include
-        neighbor_distance_target (str): Attribute containing distances for MNNs
-        neighbor_index_target (str): Attribute containing indices for MNNs
-        neighbor_index_source (str): Attribute containing indices for MNNs
-        k_src_tar (int): Number of nearest neighbors for MNNs
-        k_tar_src (int): Number of nearest neighbors for MNNs
-        k_rescue (int): Number of nearest neighbors for rescue
-        ka (int): If rescue, neighbor to normalize by
-        epsilon (float): If rescue, epsilon value for Gaussian kernel
-        pca_attr (str): If rescue, attribute containing PCs
-        neighbor_method (str): How cells are chosen for imputation
-            rescue - include cells that did not make MNNs
-            mnn - only include cells that made MNNs
-            knn - use a restricted knn search to find neighbors
-        constraint_relaxation(float): ratio determining the number of neighbors
-            that can be formed by cells in the other modality.
-            Increasing it means neighbors can be distributed more unevenly among
-            cells, one means each cell is used equally.
-            Used for neighbor_method == knn
-        remove_version (bool): Remove GENCODE version numbers from IDs
-        offset (float): Offset for Markov normalization
-        seed (int): Seed for Annoy
-        batch_target (int): Size of batches
-        verbose (bool): Print logging messages
-    """
-    if verbose:
-        help_log.info('Generating imputed {}'.format(layer_target))
-        t0 = time.time()
-    # Get indices feature information
-    fidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
-                                         attr=feat_target,
-                                         columns=False,
-                                         as_bool=True,
-                                         inverse=False)
-    fidx_src = loom_utils.get_attr_index(loom_file=loom_source,
-                                         attr=feat_source,
-                                         columns=False,
-                                         as_bool=True,
-                                         inverse=False)
-    # Get relevant data from files
-    with loompy.connect(filename=loom_source, mode='r') as ds:
-        feat_src = ds.ra[id_source]
-    with loompy.connect(filename=loom_target, mode='r') as ds:
-        num_feat = ds.shape[0]
-        feat_tar = ds.ra[id_target]
-    # Determine features to include
-    if remove_version:
-        feat_tar = general_utils.remove_gene_version(gene_ids=feat_tar)
-        feat_src = general_utils.remove_gene_version(gene_ids=feat_src)
-    feat_tar = pd.DataFrame(np.arange(0, feat_tar.shape[0]),
-                            index=feat_tar,
-                            columns=['tar'])
-    feat_src = pd.DataFrame(np.arange(0, feat_src.shape[0]),
-                            index=feat_src,
-                            columns=['src'])
-    feat_tar = feat_tar.iloc[fidx_tar]
-    feat_src = feat_src.iloc[fidx_src]
-    feat_df = pd.merge(feat_tar,
-                       feat_src,
-                       left_index=True,
-                       right_index=True,
-                       how='inner')
-    feat_df = feat_df.sort_values(by='tar')
-    # Get Markov matrix
-    if neighbor_method == 'rescue':
-        w_use = all_markov_self(loom_target=loom_target,
-                                valid_target=cell_target,
-                                loom_source=loom_source,
-                                valid_source=cell_source,
-                                neighbor_target=neighbor_index_target,
-                                neighbor_source=neighbor_index_source,
-                                k_src_tar=k_src_tar,
-                                k_tar_src=k_tar_src,
-                                k_rescue=k_rescue,
-                                ka=ka,
-                                epsilon=epsilon,
-                                pca_attr=pca_attr,
-                                offset=offset,
-                                seed=seed,
-                                verbose=verbose)
-    elif neighbor_method == 'mnn':
-        w_use = get_markov_impute(loom_target=loom_target,
-                                  loom_source=loom_source,
-                                  valid_target=cell_target,
-                                  valid_source=cell_source,
-                                  neighbor_target=neighbor_index_target,
-                                  neighbor_source=neighbor_index_source,
-                                  k_src_tar=k_src_tar,
-                                  k_tar_src=k_tar_src,
-                                  offset=offset,
-                                  verbose=verbose)
-    elif neighbor_method == 'knn':
-        w_use = gen_impute_knn(loom_target=loom_target,
-                               loom_source=loom_source,
-                               neighbor_attr=neighbor_index_target,
-                               distance_attr=neighbor_distance_target,
-                               valid_target=cell_target,
-                               valid_source=cell_source,
-                               k=10,
-                               constraint_relaxation=constraint_relaxation,
-                               offset=offset,
-                               batch_size=batch_target,
-                               verbose=verbose)
-    else:
-        raise ValueError('Unsupported neighbor method')
-
-    with loompy.connect(filename=loom_target) as ds_tar:
-        # Make empty data
-        ds_tar.layers[layer_target] = sparse.coo_matrix(ds_tar.shape,
-                                                        dtype=float)
-        # Get index for batches
-        valid_idx = np.unique(w_use.nonzero()[0])
-        batches = np.array_split(valid_idx,
-                                 np.ceil(valid_idx.shape[0] / batch_target))
-        for batch in batches:
-            tmp_w = w_use[batch, :]
-            use_feat = np.unique(tmp_w.nonzero()[1])
-            with loompy.connect(filename=loom_source, mode='r') as ds_src:
-                tmp_dat = ds_src.layers[layer_source][:, use_feat][
-                          feat_df['src'].values, :]
-                tmp_dat = sparse.csr_matrix(tmp_dat.T)
-            imputed = tmp_w[:, use_feat].dot(tmp_dat)
-            imputed = general_utils.expand_sparse(mtx=imputed,
-                                                  col_index=feat_df[
-                                                      'tar'].values,
-                                                  col_n=num_feat)
-            imputed = imputed.transpose()
-            ds_tar.layers[layer_target][:, batch] = imputed.toarray()
-        valid_feat = np.zeros((ds_tar.shape[0],), dtype=int)
-        valid_feat[feat_df['tar'].values] = 1
-        ds_tar.ra['Valid_{}'.format(layer_target)] = valid_feat
-        valid_cells = np.zeros((ds_tar.shape[1],), dtype=int)
-        valid_cells[valid_idx] = 1
-        ds_tar.ca['Valid_{}'.format(layer_target)] = valid_cells
-    if verbose:
-        t1 = time.time()
-        time_run, time_fmt = general_utils.format_run_time(t0, t1)
-        help_log.info('Imputed data in {0:.2f} {1}'.format(time_run, time_fmt))
-
-
-def loop_impute_data(loom_source,
-                     layer_source,
-                     id_source,
-                     cell_source,
-                     feat_source,
-                     loom_target,
-                     layer_target,
-                     id_target,
-                     cell_target,
-                     feat_target,
-                     neighbor_distance_target,
-                     neighbor_index_target,
-                     neighbor_index_source,
-                     k_src_tar,
-                     k_tar_src,
-                     k_rescue,
-                     ka,
-                     epsilon,
-                     pca_attr,
-                     neighbor_method='rescue',
-                     constraint_relaxation=1.1,
-                     remove_version=False,
-                     offset=1e-5,
-                     seed=None,
-                     batch_target=512,
-                     verbose=False):
-    """
-    Performs imputation over a list (if provided) of layers
-
-    Args:
-        loom_source (str): Name of loom file that contains observed count data
-        layer_source (str/list): Layer(s) containing observed count data
-        id_source (str): Row attribute specifying unique feature IDs
-        cell_source (str): Column attribute specifying columns to include
-        feat_source (str): Row attribute specifying rows to include
-        loom_target (str): Name of loom file that will receive imputed counts
-        layer_target (str/list): Layer(s) that will contain imputed count data
-        id_target (str): Row attribute specifying unique feature IDs
-        cell_target (str): Column attribute specifying columns to include
-        feat_target (str): Row attribute specifying rows to include
-        neighbor_distance_target (str): Attribute containing distances for MNNs
-            corr_dist from prep_imputation
-        neighbor_index_target (str): Attribute containing indices for MNNs
-            corr_idx from prep_imputation
-        neighbor_index_source (str): Attribute containing indices for MNNs
-            corr_idx from prep_imputation
-        k_src_tar (int): Number of mutual nearest neighbors
-        k_tar_src (int): Number of mutual nearest neighbors
-        k_rescue (int): Number of neighbors for rescue
-        ka (int): If rescue, neighbor to normalize by
-        epsilon (float): If rescue, epsilon value for Gaussian kernel
-        pca_attr (str): If not rescue, attribute containing PCs
-        neighbor_method (str): How cells are chosen for imputation
-            rescue - include cells that did not make MNNs
-            mnn - only include cells that made MNNs
-            knn - use a restricted knn search to find neighbors
-        constraint_relaxation(float): used for knn imputation
-            a ratio determining the number of neighbors that can be
-            formed by cells in the other dataset. Increasing it means
-            neighbors can be distributed more unevenly among cells,
-            one means each cell is used equally.
-        remove_version (bool): Remove GENCODE version numbers from IDs
-        offset (float): Offset for Markov normalization
-        seed (int): Seed for Annoy
-        batch_target (int): Size of chunks
-        verbose (bool): Print logging messages
-    """
-    if isinstance(layer_source, list) and isinstance(layer_target, list):
-        if len(layer_source) != len(layer_target):
-            err_msg = 'layer_source and layer_target must have same length'
-            if verbose:
-                help_log.error(err_msg)
-            raise ValueError(err_msg)
-        for i in range(0, len(layer_source)):
-            impute_data(loom_source=loom_source,
-                        layer_source=layer_source[i],
-                        id_source=id_source,
-                        cell_source=cell_source,
-                        feat_source=feat_source,
-                        loom_target=loom_target,
-                        layer_target=layer_target[i],
-                        id_target=id_target,
-                        cell_target=cell_target,
-                        feat_target=feat_target,
-                        neighbor_distance_target=neighbor_distance_target,
-                        neighbor_index_target=neighbor_index_target,
-                        neighbor_index_source=neighbor_index_source,
-                        k_src_tar=k_src_tar,
-                        k_tar_src=k_tar_src,
-                        k_rescue=k_rescue,
-                        ka=ka,
-                        epsilon=epsilon,
-                        pca_attr=pca_attr,
-                        neighbor_method=neighbor_method,
-                        constraint_relaxation=constraint_relaxation,
-                        remove_version=remove_version,
-                        offset=offset,
-                        seed=seed,
-                        batch_target=batch_target,
-                        verbose=verbose)
-
-    elif isinstance(layer_source, str) and isinstance(layer_target, str):
-        impute_data(loom_source=loom_source,
-                    layer_source=layer_source,
-                    id_source=id_source,
-                    cell_source=cell_source,
-                    feat_source=feat_source,
-                    loom_target=loom_target,
-                    layer_target=layer_target,
-                    id_target=id_target,
-                    cell_target=cell_target,
-                    feat_target=feat_target,
-                    neighbor_distance_target=neighbor_distance_target,
-                    neighbor_index_target=neighbor_index_target,
-                    neighbor_index_source=neighbor_index_source,
-                    k_src_tar=k_src_tar,
-                    k_tar_src=k_tar_src,
-                    k_rescue=k_rescue,
-                    ka=ka,
-                    epsilon=epsilon,
-                    pca_attr=pca_attr,
-                    neighbor_method=neighbor_method,
-                    constraint_relaxation=constraint_relaxation,
-                    remove_version=remove_version,
-                    offset=offset,
-                    batch_target=batch_target,
-                    verbose=verbose)
-    else:
-        err_msg = 'layer_source and layer_target must be consistent shapes'
-        help_log.error(err_msg)
-        raise ValueError(err_msg)
+        cel
