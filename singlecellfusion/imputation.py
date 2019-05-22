@@ -279,6 +279,9 @@ def impute_between_datasets(loom_x,
             formed by cells in the other dataset. Increasing it means
             neighbors can be distributed more unevenly among cells, 
             one means each cell is used equally.
+        speed_factor (int): used for knn imputation
+            During loops find k * speed_factor neighbors
+            Speeds up analysis at cost of memory
         feature_id_x (str): Attribute specifying unique feature IDs
         feature_id_y (str): Attribute specifying unique feature IDs
         mutual_k_x_to_y (int/str): k value for MNNs
@@ -337,7 +340,7 @@ def impute_between_datasets(loom_x,
     max_k = np.max([mutual_k_x_to_y, mutual_k_y_to_x])
     # Get distances
     if neighbor_method in ['rescue', 'mnn']:
-        helpers.perform_loom_knn(loom_x=loom_x,
+        helpers.get_knn_for_mnn(loom_x=loom_x,
                                  layer_x=layer_x,
                                  neighbor_distance_x=neighbor_distance_x,
                                  neighbor_index_x=neighbor_index_x,
@@ -361,8 +364,7 @@ def impute_between_datasets(loom_x,
                                  remove_version=remove_id_version,
                                  verbose=verbose)
     elif neighbor_method in ['knn']:
-        imp_log.info('knn is not currently fully supported, and may have bugs')
-        helpers.perform_loom_knn(loom_x=loom_x,
+        helpers.get_constrained_knn(loom_x=loom_x,
                                  layer_x=layer_x,
                                  neighbor_distance_x=neighbor_distance_x,
                                  neighbor_index_x=neighbor_index_x,
@@ -379,7 +381,10 @@ def impute_between_datasets(loom_x,
                                  valid_ra_x=common_attr,
                                  valid_ca_y=valid_ca_y,
                                  valid_ra_y=common_attr,
+                                    relaxation=constraint_relaxation,
+                                    speed_factor=speed_factor,
                                  n_trees=10,
+                                    seed=seed,
                                  batch_x=batch_x,
                                  batch_y=batch_y,
                                  remove_version=remove_id_version,

@@ -1880,4 +1880,278 @@ def impute_data(loom_source,
         loom_source (str): Name of loom file that contains observed count data
         layer_source (str/list): Layer(s) containing observed count data
         id_source (str): Row attribute specifying unique feature IDs
-        cel
+        cell_source (str): Column attribute specifying columns to include
+        feat_source (str): Row attribute specifying rows to include
+        loom_target (str): Name of loom file that will receive imputed counts
+        layer_target (str/list): Layer(s) that will contain imputed count data
+        id_target (str): Row attribute specifying unique feature IDs
+        cell_target (str): Column attribute specifying columns to include
+        feat_target (str): Row attribute specifying rows to include
+        neighbor_distance_target (str): Attribute containing distances for MNNs
+        neighbor_index_target (str): Attribute containing indices for MNNs
+        neighbor_index_source (str): Attribute containing indices for MNNs
+        k_src_tar (int): Number of nearest neighbors for MNNs
+        k_tar_src (int): Number of nearest neighbors for MNNs
+        k_rescue (int): Number of nearest neighbors for rescue
+        ka (int): If rescue, neighbor to normalize by
+        epsilon (float): If rescue, epsilon value for Gaussian kernel
+        pca_attr (str): If rescue, attribute containing PCs
+        neighbor_method (str): How cells are chosen for imputation
+            rescue - include cells that did not make MNNs
+            mnn - only include cells that made MNNs
+            knn - use a restricted knn search to find neighbors
+        constraint_relaxation(float): ratio determining the number of neighbors
+            that can be formed by cells in the other modality.
+            Increasing it means neighbors can be distributed more unevenly among
+            cells, one means each cell is used equally.
+            Used for neighbor_method == knn
+        remove_version (bool): Remove GENCODE version numbers from IDs
+        offset (float): Offset for Markov normalization
+        seed (int): Seed for Annoy
+        batch_target (int): Size of batches
+        verbose (bool): Print logging messages
+    """
+    if verbose:
+        help_log.info('Generating imputed {}'.format(layer_target))
+        t0 = time.time()
+    # Get indices feature information
+    fidx_tar = loom_utils.get_attr_index(loom_file=loom_target,
+                                         attr=feat_target,
+                                         columns=False,
+                                         as_bool=True,
+                                         inverse=False)
+    fidx_src = loom_utils.get_attr_index(loom_file=loom_source,
+                                         attr=feat_source,
+                                         columns=False,
+                                         as_bool=True,
+                                         inverse=False)
+    # Get relevant data from files
+    with loompy.connect(filename=loom_source, mode='r') as ds:
+        feat_src = ds.ra[id_source]
+    with loompy.connect(filename=loom_target, mode='r') as ds:
+        num_feat = ds.shape[0]
+        feat_tar = ds.ra[id_target]
+    # Determine features to include
+    if remove_version:
+        feat_tar = general_utils.remove_gene_version(gene_ids=feat_tar)
+        feat_src = general_utils.remove_gene_version(gene_ids=feat_src)
+    feat_tar = pd.DataFrame(np.arange(0, feat_tar.shape[0]),
+                            index=feat_tar,
+                            columns=['tar'])
+    feat_src = pd.DataFrame(np.arange(0, feat_src.shape[0]),
+                            index=feat_src,
+                            columns=['src'])
+    feat_tar = feat_tar.iloc[fidx_tar]
+    feat_src = feat_src.iloc[fidx_src]
+    feat_df = pd.merge(feat_tar,
+                       feat_src,
+                       left_index=True,
+                       right_index=True,
+                       how='inner')
+    feat_df = feat_df.sort_values(by='tar')
+    # Get Markov matrix
+    if neighbor_method == 'rescue':
+        w_use = all_markov_self(loom_target=loom_target,
+                                valid_target=cell_target,
+                                loom_source=loom_source,
+                                valid_source=cell_source,
+                                neighbor_target=neighbor_index_target,
+                                neighbor_source=neighbor_index_source,
+                                k_src_tar=k_src_tar,
+                                k_tar_src=k_tar_src,
+                                k_rescue=k_rescue,
+                                ka=ka,
+                                epsilon=epsilon,
+                                pca_attr=pca_attr,
+                                offset=offset,
+                                seed=seed,
+                                verbose=verbose)
+    elif neighbor_method == 'mnn':
+        w_use = get_markov_impute(loom_target=loom_target,
+                                  loom_source=loom_source,
+                                  valid_target=cell_target,
+                                  valid_source=cell_source,
+                                  neighbor_target=neighbor_index_target,
+                                  neighbor_source=neighbor_index_source,
+                                  k_src_tar=k_src_tar,
+                                  k_tar_src=k_tar_src,
+                                  offset=offset,
+                                  verbose=verbose)
+    elif neighbor_method == 'knn':
+        w_use = gen_impute_knn(loom_target=loom_target,
+                               loom_source=loom_source,
+                               neighbor_attr=neighbor_index_target,
+                               distance_attr=neighbor_distance_target,
+                               valid_target=cell_target,
+                               valid_source=cell_source,
+                               offset=offset,
+                               batch_size=batch_target,
+                               verbose=verbose)
+    else:
+        raise ValueError('Unsupported neighbor method')
+
+    with loompy.connect(filename=loom_target) as ds_tar:
+        # Make empty data
+        ds_tar.layers[layer_target] = sparse.coo_matrix(ds_tar.shape,
+                                                        dtype=float)
+        # Get index for batches
+        valid_idx = np.unique(w_use.nonzero()[0])
+        batches = np.array_split(valid_idx,
+                                 np.ceil(valid_idx.shape[0] / batch_target))
+        for batch in batches:
+            tmp_w = w_use[batch, :]
+            use_feat = np.unique(tmp_w.nonzero()[1])
+            with loompy.connect(filename=loom_source, mode='r') as ds_src:
+                tmp_dat = ds_src.layers[layer_source][:, use_feat][
+                          feat_df['src'].values, :]
+                tmp_dat = sparse.csr_matrix(tmp_dat.T)
+            imputed = tmp_w[:, use_feat].dot(tmp_dat)
+            imputed = general_utils.expand_sparse(mtx=imputed,
+                                                  col_index=feat_df[
+                                                      'tar'].values,
+                                                  col_n=num_feat)
+            imputed = imputed.transpose()
+            ds_tar.layers[layer_target][:, batch] = imputed.toarray()
+        valid_feat = np.zeros((ds_tar.shape[0],), dtype=int)
+        valid_feat[feat_df['tar'].values] = 1
+        ds_tar.ra['Valid_{}'.format(layer_target)] = valid_feat
+        valid_cells = np.zeros((ds_tar.shape[1],), dtype=int)
+        valid_cells[valid_idx] = 1
+        ds_tar.ca['Valid_{}'.format(layer_target)] = valid_cells
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = general_utils.format_run_time(t0, t1)
+        help_log.info('Imputed data in {0:.2f} {1}'.format(time_run, time_fmt))
+
+
+def loop_impute_data(loom_source,
+                     layer_source,
+                     id_source,
+                     cell_source,
+                     feat_source,
+                     loom_target,
+                     layer_target,
+                     id_target,
+                     cell_target,
+                     feat_target,
+                     neighbor_distance_target,
+                     neighbor_index_target,
+                     neighbor_index_source,
+                     k_src_tar,
+                     k_tar_src,
+                     k_rescue,
+                     ka,
+                     epsilon,
+                     pca_attr,
+                     neighbor_method='rescue',
+                     constraint_relaxation=1.1,
+                     remove_version=False,
+                     offset=1e-5,
+                     seed=None,
+                     batch_target=512,
+                     verbose=False):
+    """
+    Performs imputation over a list (if provided) of layers
+
+    Args:
+        loom_source (str): Name of loom file that contains observed count data
+        layer_source (str/list): Layer(s) containing observed count data
+        id_source (str): Row attribute specifying unique feature IDs
+        cell_source (str): Column attribute specifying columns to include
+        feat_source (str): Row attribute specifying rows to include
+        loom_target (str): Name of loom file that will receive imputed counts
+        layer_target (str/list): Layer(s) that will contain imputed count data
+        id_target (str): Row attribute specifying unique feature IDs
+        cell_target (str): Column attribute specifying columns to include
+        feat_target (str): Row attribute specifying rows to include
+        neighbor_distance_target (str): Attribute containing distances for MNNs
+            corr_dist from prep_imputation
+        neighbor_index_target (str): Attribute containing indices for MNNs
+            corr_idx from prep_imputation
+        neighbor_index_source (str): Attribute containing indices for MNNs
+            corr_idx from prep_imputation
+        k_src_tar (int): Number of mutual nearest neighbors
+        k_tar_src (int): Number of mutual nearest neighbors
+        k_rescue (int): Number of neighbors for rescue
+        ka (int): If rescue, neighbor to normalize by
+        epsilon (float): If rescue, epsilon value for Gaussian kernel
+        pca_attr (str): If not rescue, attribute containing PCs
+        neighbor_method (str): How cells are chosen for imputation
+            rescue - include cells that did not make MNNs
+            mnn - only include cells that made MNNs
+            knn - use a restricted knn search to find neighbors
+        constraint_relaxation(float): used for knn imputation
+            a ratio determining the number of neighbors that can be
+            formed by cells in the other dataset. Increasing it means
+            neighbors can be distributed more unevenly among cells,
+            one means each cell is used equally.
+        remove_version (bool): Remove GENCODE version numbers from IDs
+        offset (float): Offset for Markov normalization
+        seed (int): Seed for Annoy
+        batch_target (int): Size of chunks
+        verbose (bool): Print logging messages
+    """
+    if isinstance(layer_source, list) and isinstance(layer_target, list):
+        if len(layer_source) != len(layer_target):
+            err_msg = 'layer_source and layer_target must have same length'
+            if verbose:
+                help_log.error(err_msg)
+            raise ValueError(err_msg)
+        for i in range(0, len(layer_source)):
+            impute_data(loom_source=loom_source,
+                        layer_source=layer_source[i],
+                        id_source=id_source,
+                        cell_source=cell_source,
+                        feat_source=feat_source,
+                        loom_target=loom_target,
+                        layer_target=layer_target[i],
+                        id_target=id_target,
+                        cell_target=cell_target,
+                        feat_target=feat_target,
+                        neighbor_distance_target=neighbor_distance_target,
+                        neighbor_index_target=neighbor_index_target,
+                        neighbor_index_source=neighbor_index_source,
+                        k_src_tar=k_src_tar,
+                        k_tar_src=k_tar_src,
+                        k_rescue=k_rescue,
+                        ka=ka,
+                        epsilon=epsilon,
+                        pca_attr=pca_attr,
+                        neighbor_method=neighbor_method,
+                        constraint_relaxation=constraint_relaxation,
+                        remove_version=remove_version,
+                        offset=offset,
+                        seed=seed,
+                        batch_target=batch_target,
+                        verbose=verbose)
+
+    elif isinstance(layer_source, str) and isinstance(layer_target, str):
+        impute_data(loom_source=loom_source,
+                    layer_source=layer_source,
+                    id_source=id_source,
+                    cell_source=cell_source,
+                    feat_source=feat_source,
+                    loom_target=loom_target,
+                    layer_target=layer_target,
+                    id_target=id_target,
+                    cell_target=cell_target,
+                    feat_target=feat_target,
+                    neighbor_distance_target=neighbor_distance_target,
+                    neighbor_index_target=neighbor_index_target,
+                    neighbor_index_source=neighbor_index_source,
+                    k_src_tar=k_src_tar,
+                    k_tar_src=k_tar_src,
+                    k_rescue=k_rescue,
+                    ka=ka,
+                    epsilon=epsilon,
+                    pca_attr=pca_attr,
+                    neighbor_method=neighbor_method,
+                    constraint_relaxation=constraint_relaxation,
+                    remove_version=remove_version,
+                    offset=offset,
+                    batch_target=batch_target,
+                    verbose=verbose)
+    else:
+        err_msg = 'layer_source and layer_target must be consistent shapes'
+        help_log.error(err_msg)
+        raise ValueError(err_msg)
