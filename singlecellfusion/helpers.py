@@ -1297,6 +1297,8 @@ def constrained_one_direction(output_loom,
     n_connects[col_idx_other] = 0
     unsaturated = (n_connects < k_saturate)
     unsaturated_cells = np.where(unsaturated)[0]
+    if seed is not None:
+        np.random.seed(seed)
     # Perform search
     while rejected_cells.size != 0:
         # Get a random selection of cells
@@ -1365,8 +1367,8 @@ def constrained_one_direction(output_loom,
         accepted_idx = accepted_idx.fillna(value=0)
         accepted_dist = accepted_dist.fillna(value=0)
     with loompy.connect(filename=output_loom) as ds:
-        ds.ca[output_distance] = accepted_dist
-        ds.ca[output_index] = accepted_idx
+        ds.ca[output_distance] = accepted_dist.values
+        ds.ca[output_index] = accepted_idx.values.astype(int)
     if verbose:
         t1 = time.time()
         time_run, time_fmt = general_utils.format_run_time(t0, t1)
