@@ -225,7 +225,6 @@ def impute_between_datasets(loom_x,
                             neighbor_index_x='corr_indices',
                             neighbor_index_y='corr_indices',
                             neighbor_distance_x='corr_distances',
-                            neighbor_distance_y='corr_distances',
                             neighbor_method="rescue",
                             constraint_relaxation=1.1,
                             speed_factor=10,
@@ -269,9 +268,7 @@ def impute_between_datasets(loom_x,
             corr_idx_y in prep_for_imputation
         neighbor_distance_x (str): Attribute containing distances for MNNs
             corr_dist_x in prep_for_imputation
-        neighbor_distance_y (str): Attribute containing distances for MNNs
-            corr_dist_y in prep_for imputation
-        neighbor_method (str): How cells are chosen for imputation 
+        neighbor_method (str): How cells are chosen for imputation
             rescue - include cells that did not make MNNs
             mnn - only include cells that made MNNs
             knn - use a restricted knn search to find neighbors
@@ -401,7 +398,6 @@ def impute_between_datasets(loom_x,
                              id_target=feature_id_x,
                              cell_target=valid_ca_x,
                              feat_target=valid_ra_x,
-                             neighbor_distance_target=neighbor_distance_x,
                              neighbor_index_target=neighbor_index_x,
                              neighbor_index_source=neighbor_index_y,
                              k_src_tar=mutual_k_y_to_x,
@@ -411,7 +407,6 @@ def impute_between_datasets(loom_x,
                              epsilon=epsilon_x,
                              pca_attr=pca_attr_x,
                              neighbor_method=neighbor_method,
-                             constraint_relaxation=constraint_relaxation,
                              remove_version=remove_id_version,
                              offset=1e-5,
                              seed=seed,
@@ -428,7 +423,6 @@ def impute_between_datasets(loom_x,
                              id_target=feature_id_y,
                              cell_target=valid_ca_y,
                              feat_target=valid_ra_y,
-                             neighbor_distance_target=neighbor_distance_y,
                              neighbor_index_target=neighbor_index_y,
                              neighbor_index_source=neighbor_index_x,
                              k_src_tar=mutual_k_x_to_y,
@@ -438,7 +432,6 @@ def impute_between_datasets(loom_x,
                              epsilon=epsilon_y,
                              pca_attr=pca_attr_y,
                              neighbor_method=neighbor_method,
-                             constraint_relaxation=constraint_relaxation,
                              remove_version=remove_id_version,
                              offset=1e-5,
                              seed=seed,

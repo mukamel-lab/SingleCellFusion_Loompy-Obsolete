@@ -1306,10 +1306,12 @@ def constrained_one_direction(output_loom,
         if verbose:
             base_rej = '{0} ({1}%) cells need to find neighbors'
             help_log.info(base_rej.format(rejected_cells.size,
-                                         (rejected_cells.size/self_num)*100))
+                                          (
+                                                      rejected_cells.size / self_num) * 100))
             base_sat = '{0} ({1}%) cells can make neighbors'
             help_log.info(base_sat.format(unsaturated_cells.size,
-                                          (unsaturated_cells.size/other_num)*100))
+                                          (
+                                                      unsaturated_cells.size / other_num) * 100))
         # Train the kNN
         t = train_knn(loom_file=loom_other,
                       layer=layer_other,
