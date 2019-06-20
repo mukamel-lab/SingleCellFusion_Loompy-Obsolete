@@ -16,7 +16,7 @@ import tempfile
 import os
 import functools
 import logging
-from numba import jit
+from scipy.stats import kruskal
 from annoy import AnnoyIndex
 from . import general_utils
 from . import loom_utils
@@ -94,6 +94,108 @@ def prep_pca(view,
 
 
 # Imputation helpers
+def perform_cluster_kruskal(loom_file,
+                            layer='',
+                            cluster_attr='ClusterID',
+                            cell_attr='CellID',
+                            feat_attr='Accession',
+                            valid_ca=None,
+                            valid_ra=None,
+                            batch_size=512):
+    """
+    Performs a Kruskal-Wallis test per cluster for all valid genes
+
+    Args:
+        loom_file (str): Path to loom file
+        layer (str): Layer of counts
+        cluster_attr (str): Column attribute containing cluster IDs
+        cell_attr (str): Column attribute containing unique cell IDs
+        feat_attr (str): Row attribute containing unique feature IDs
+        valid_ra (str): Row attribute specifying valid features
+        valid_ca (str): Column attribute specifying valid cells
+        batch_size (int): Size of chunks for batches
+    """
+    # Set-up for subsequent steps
+    col_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ca,
+                                        columns=True,
+                                        as_bool=False,
+                                        inverse=False)
+    row_idx = loom_utils.get_attr_index(loom_file=loom_file,
+                                        attr=valid_ra,
+                                        columns=False,
+                                        as_bool=False,
+                                        inverse=False)
+    layers = loom_utils.make_layer_list(layer)
+    result_dict = dict()
+    # Perform Kruskal-Wallis test
+    with loompy.connect(loom_file) as ds:
+        # Get lookups
+        gene_lookup = pd.DataFrame({'indices': np.arange(ds.shape[0])},
+                                   index=ds.ra[feat_attr])
+        cluster_lookup = pd.DataFrame({'clusters': ds.ca[cluster_attr]},
+                                      index=ds.ca[cell_attr])
+        cluster_lookup = cluster_lookup.iloc[col_idx, :]
+        cell_lookup = pd.DataFrame({'indices': np.arange(ds.shape[1])},
+                                   index=ds.ca[cell_attr])
+        cell_lookup = cell_lookup.iloc[col_idx, :]
+        unq_clusters = np.unique(cluster_lookup['clusters'])
+        # Get cluster indices (so it does not have to be called in every loop)
+        cluster_idx = dict()
+        for cluster in unq_clusters:
+            tmp_idx = cluster_lookup['clusters'] == cluster
+            rel_cells = cluster_lookup.index.values[tmp_idx]
+            rel_idx = cell_lookup.loc[rel_cells, 'indices'].values
+            cluster_idx[cluster] = rel_idx
+        # Loop over genes
+        for (_, selection, view) in ds.scan(items=row_idx,
+                                            axis=0,
+                                            layers=layers,
+                                            batch_size=batch_size):
+            # Get data in chunks
+            tmp_dat = view.layers[layer].sparse(rows=np.arange(view.shape[0]),
+                                                cols=np.arange(view.shape[1]))
+            # Loop over all genes
+            for i in np.arange(view.shape[0]):
+                gene_list = list()
+                pct_list = list()
+                curr_gene = view.ra[feat_attr][i]
+                rel_dat = tmp_dat.tocsr()[i, :].copy()
+                # Loop over all clusters
+                for cluster in unq_clusters:
+                    rel_idx = cluster_idx[cluster]
+                    gene_dat = rel_dat.tocsc()[:, rel_idx]
+                    gene_list.append(np.ravel(gene_dat.todense()))
+                    pct_list.append(gene_dat.data.shape[0] / gene_dat.shape[1])
+                # Perform kruskal-wallis test
+                try:  # for situations in which all numbers are identical
+                    hval, pval = kruskal(*gene_list)
+                except RuntimeWarning:
+                    hval = np.nan
+                    pval = np.nan
+                result_dict[curr_gene] = [hval, pval, np.max(pct_list)]
+        # Make data frame of results
+        result_df = pd.DataFrame.from_dict(result_dict,
+                                           orient='index',
+                                           columns=['H', 'pval',
+                                                    'max_cluster_pct'])
+        # Make merged dataframe
+        merged = pd.merge(gene_lookup,
+                          result_df,
+                          left_index=True,
+                          right_index=True,
+                          how='left')
+        merged['H'] = merged['H'].fillna(value=0)
+        merged['pval'] = merged['pval'].fillna(value=1)
+        merged['max_cluster_pct'] = merged['max_cluster_pct'].fillna(0)
+        merged['cluster_attr'] = cluster_attr
+        # Add data to file
+        ds.ra['kruskal_H'] = merged['H'].values
+        ds.ra['kruskal_pval'] = merged['pval'].values
+        ds.ra['kruskal_max_cluster_pct'] = merged['max_cluster_pct'].values
+        ds.ra['kruskal_cluster_attr'] = merged['cluster_attr'].values
+
+
 def batch_add_sparse(loom_file,
                      layers,
                      row_attrs,
@@ -1305,11 +1407,11 @@ def constrained_one_direction(output_loom,
         np.random.shuffle(rejected_cells)
         if verbose:
             base_rej = '{0} ({1}%) cells need to find neighbors'
-            help_log.info(base_rej.format(rejected_cells.size,
-                                         (rejected_cells.size/self_num)*100))
+            help_log.info(base_rej.format(rejected_cells.size, (
+                    rejected_cells.size / self_num) * 100))
             base_sat = '{0} ({1}%) cells can make neighbors'
-            help_log.info(base_sat.format(unsaturated_cells.size,
-                                          (unsaturated_cells.size/other_num)*100))
+            help_log.info(base_sat.format(unsaturated_cells.size, (
+                    unsaturated_cells.size / other_num) * 100))
         # Train the kNN
         t = train_knn(loom_file=loom_other,
                       layer=layer_other,
