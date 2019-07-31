@@ -807,7 +807,7 @@ def temp_zscore_loom(loom_file,
     if tmp_dir is None:
         tmp_dir = tempfile.gettempdir()
     tmp_loom = tempfile.mktemp(suffix='.loom', dir=tmp_dir)
-    with loompy.connect(filename=loom_file, mode='r+') as ds:
+    with loompy.connect(filename=loom_file, mode='r') as ds:
         for (_, selection, view) in ds.scan(axis=1,
                                             items=col_idx,
                                             layers=layers,
@@ -836,6 +836,18 @@ def temp_zscore_loom(loom_file,
                              batch_size=batch_size)
             append_loom = True
             start_pos = selection[-1] + 1
+        if start_pos < ds.shape[1]:
+            dat = sparse.coo_matrix((ds.shape[0], ds.shape[1] - start_pos))
+            new_idx = np.arange(start=start_pos,
+                                stop=ds.shape[1] + 1,
+                                step=1)
+            batch_add_sparse(loom_file=tmp_loom,
+                             layers={'': dat},
+                             row_attrs={feat_attr: ds.ra[feat_attr]},
+                             col_attrs={'FakeID': new_idx},
+                             append=append_loom,
+                             empty_base=False,
+                             batch_size=batch_size)
     # Log
     if verbose:
         t1 = time.time()
