@@ -16,7 +16,7 @@ def read(filename):
 
 setup(
     name="singlecellfusion",
-    version="0.1.0",
+    version="0.1.1",
     url="https://github.com/mukamel-lab/SingleCellFusion",
     license='GNU General Public License Version 2',
 
