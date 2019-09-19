@@ -12,7 +12,7 @@ Cells profiled by each technique can then be analyzed together in a joint, lower
 
 The package is still under active development and function parameters will continue to change over time. A changelog of
 SingleCellFusion's development can be viewed
-`here <docs/changelog.rst>`_
+`here <docs/changelog.rst>`_.
 
 
 Requirements
@@ -24,6 +24,7 @@ Requirements
 * scipy
 * pandas
 * numba
+* fbpca
 
 
 Installation

@@ -1418,12 +1418,23 @@ def constrained_one_direction(output_loom,
         # Get a random selection of cells
         np.random.shuffle(rejected_cells)
         if verbose:
+<<<<<<< HEAD
             base_rej = '{0} ({1}%) cells need to find neighbors'
             help_log.info(base_rej.format(rejected_cells.size, (
                     rejected_cells.size / self_num) * 100))
             base_sat = '{0} ({1}%) cells can make neighbors'
             help_log.info(base_sat.format(unsaturated_cells.size, (
                     unsaturated_cells.size / other_num) * 100))
+=======
+            base_rej = '{0} ({1:.2f}%) cells need to find neighbors'
+            help_log.info(base_rej.format(rejected_cells.size,
+                                          (
+                                                      rejected_cells.size / self_num) * 100))
+            base_sat = '{0} ({1:.2f}%) cells can make neighbors'
+            help_log.info(base_sat.format(unsaturated_cells.size,
+                                          (
+                                                      unsaturated_cells.size / other_num) * 100))
+>>>>>>> master
         # Train the kNN
         t = train_knn(loom_file=loom_other,
                       layer=layer_other,

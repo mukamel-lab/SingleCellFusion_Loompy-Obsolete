@@ -33,7 +33,8 @@ setup(
                       'scikit-learn>=0.19.1',
                       'scipy>=1.1.0',
                       'pandas>=0.23.4',
-                      'numba>=0.41.0'
+                      'numba>=0.41.0',
+                      'fbpca>=1.0'
                       ],
 
     classifiers=[
