@@ -1,12 +1,18 @@
 SingleCellFusion
 ================
 
-SingleCellFusion is a package for computational integration and analysis of single cell multiomics data sets, including  transcriptom (RNA-Seq), DNA methylome (mC-Seq), and chromatin accessibility (ATAC-Seq). For a given pair of data sets, SingleCellFusion finds the best matching pairs of cells in each modality (i.e. nearest neighbors) by taking advantage of the correlation of gene expression with epigenomic marks across the gene body. Neighbors are used to impute counts for each data set. For example, if integrating scRNA-seq and snATAC-seq cells, SingleCellFusion will generate imputed
+SingleCellFusion is a package for computational integration and analysis of single cell multiomics data sets, including
+transcriptom (RNA-Seq), DNA methylome (mC-Seq), and chromatin accessibility (ATAC-Seq). For a given pair of data sets,
+SingleCellFusion finds the best matching pairs of cells in each modality (i.e. nearest neighbors) by taking advantage of
+the correlation of gene expression with epigenomic marks across the gene body. Neighbors are used to impute counts for
+each data set. For example, if integrating scRNA-seq and snATAC-seq cells, SingleCellFusion will generate imputed
 scRNA-seq counts for the snATAC-seq profiled cells and snATAC-seq counts for the scRNA-seq profiled cells.
 Cells profiled by each technique can then be analyzed together in a joint, lower dimensional space.
 
 
-The package is still under active development and function parameters will continue to change over time.
+The package is still under active development and function parameters will continue to change over time. A changelog of
+SingleCellFusion's development can be viewed
+`here <docs/changelog.rst>`_
 
 
 Requirements
