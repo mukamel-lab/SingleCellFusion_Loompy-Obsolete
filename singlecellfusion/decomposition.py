@@ -10,12 +10,79 @@ import numpy as np
 from sklearn.decomposition import IncrementalPCA
 import logging
 import time
-from . import loom_utils
-from . import general_utils
+from . import utils
 from . import helpers
 
 # Start log
 decomp_log = logging.getLogger(__name__)
+
+
+def check_pca_batches(loom_file,
+                      n_pca=50,
+                      batch_size=512,
+                      verbose=False):
+    """
+    Checks and adjusts batch size for PCA
+
+    Args:
+        loom_file (str): Path to loom file
+        n_pca (int): Number of components for PCA
+        batch_size (int): Size of chunks
+        verbose (bool): Print logging messages
+
+    Returns:
+        batch_size (int): Updated batch size to work with PCA
+    """
+    # Get the number of cells
+    with loompy.connect(loom_file) as ds:
+        num_total = ds.shape[1]
+    # Check if batch_size and PCA are even reasonable
+    if num_total < n_pca:
+        err_msg = 'More PCA components {0} than samples {1}'.format(n_pca,
+                                                                    num_total)
+        if verbose:
+            decomp_log.error(err_msg)
+        raise ValueError(decomp_log)
+    if batch_size < n_pca:
+        batch_size = n_pca
+    # Adjust based on expected size
+    mod_total = num_total % batch_size
+    adjusted_batch = False
+    if mod_total < n_pca:
+        adjusted_batch = True
+        batch_size = batch_size - n_pca + mod_total
+    if batch_size < n_pca:
+        batch_size = num_total
+    # Report to user
+    if verbose and adjusted_batch:
+        decomp_log.info('Adjusted batch size to {0} for PCA'.format(batch_size))
+    # Return value
+    return batch_size
+
+
+def prep_pca(view,
+             layer,
+             row_idx,
+             scale_attr=None):
+    """
+    Performs data processing for PCA on a given layer
+
+    Args:
+        view (object): Slice of loom file
+        layer (str): Layer in view
+        row_idx (array): Features to use
+        scale_attr (str): If true, scale cells by this attribute
+            Typically used in snmC-seq to scale by a cell's mC/C
+
+    Returns:
+        dat (matrix): Scaled data for PCA
+    """
+    dat = view.layers[layer][row_idx, :].copy()
+    if scale_attr is not None:
+        rel_scale = view.ca[scale_attr]
+        dat = np.divide(dat, rel_scale)
+    dat = dat.transpose()
+    return dat
 
 
 def batch_pca(loom_file,
@@ -69,16 +136,16 @@ def batch_pca(loom_file,
         ds.ca[out_attr] = np.zeros((ds.shape[1], n_pca), dtype=float)
         n = ds.ca[out_attr].shape[0]
         # Get column and row indices
-        col_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                            attr=valid_ca,
-                                            columns=True,
-                                            inverse=False)
-        row_idx = loom_utils.get_attr_index(loom_file=loom_file,
-                                            attr=valid_ra,
-                                            columns=False,
-                                            inverse=False)
+        col_idx = utils.get_attr_index(loom_file=loom_file,
+                                       attr=valid_ca,
+                                       columns=True,
+                                       inverse=False)
+        row_idx = utils.get_attr_index(loom_file=loom_file,
+                                       attr=valid_ra,
+                                       columns=False,
+                                       inverse=False)
         # Fit model
-        layers = loom_utils.make_layer_list(layers=layer)
+        layers = utils.make_layer_list(layers=layer)
         for (_, _, view) in ds.scan(items=col_idx,
                                     layers=layers,
                                     axis=1,
@@ -90,7 +157,7 @@ def batch_pca(loom_file,
             pca.partial_fit(dat)
         if verbose:
             t_fit = time.time()
-            time_run, time_fmt = general_utils.format_run_time(t_start, t_fit)
+            time_run, time_fmt = utils.format_run_time(t_start, t_fit)
             decomp_log.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
         # Transform
         for (_, selection, view) in ds.scan(items=col_idx,
@@ -115,6 +182,6 @@ def batch_pca(loom_file,
         # Log
         if verbose:
             t_tran = time.time()
-            time_run, time_fmt = general_utils.format_run_time(t_fit, t_tran)
+            time_run, time_fmt = utils.format_run_time(t_fit, t_tran)
             decomp_log.info(
                 'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))

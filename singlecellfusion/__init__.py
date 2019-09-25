@@ -1,13 +1,14 @@
-"""singlecellfusion - Analyzes single-cell transcriptomic and epigenomic data"""
+"""singlecellfusion - Integrates single cell transcriptomic and epigenomic data"""
 
 __version__ = '0.1.0'
 __author__ = 'Mukamel Lab <lab@brainome.ucsd.edu>'
 __all__ = ['decomposition',
-           'general_utils',
-           'imputation',
+           'features',
            'helpers',
-           'loom_utils',
+           'imputation',
+           'integration',
            'recipes',
+           'utils'
            ]
 # Set-up logger
 import logging
@@ -18,4 +19,5 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Import packages
-from singlecellfusion import *
+from .features import find_common_features
+from .imputation import perform_imputation
