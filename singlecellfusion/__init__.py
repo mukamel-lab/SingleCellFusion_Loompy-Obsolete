@@ -4,7 +4,6 @@ __version__ = '0.1.0'
 __author__ = 'Mukamel Lab <lab@brainome.ucsd.edu>'
 __all__ = ['decomposition',
            'features',
-           'helpers',
            'imputation',
            'integration',
            'recipes',

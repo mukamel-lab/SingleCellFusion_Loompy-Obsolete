@@ -11,7 +11,6 @@ from sklearn.decomposition import IncrementalPCA
 import logging
 import time
 from . import utils
-from . import helpers
 
 # Start log
 decomp_log = logging.getLogger(__name__)
@@ -68,7 +67,7 @@ def prep_pca(view,
     Performs data processing for PCA on a given layer
 
     Args:
-        view (object): Slice of loom file
+        view (loompy object): Slice of loom file
         layer (str): Layer in view
         row_idx (array): Features to use
         scale_attr (str): If true, scale cells by this attribute
@@ -120,16 +119,16 @@ def batch_pca(loom_file,
     """
     if verbose:
         decomp_log.info('Fitting PCA')
-        t_start = time.time()
+        t0 = time.time()
     if drop_first:
         n_tmp = n_pca + 1
     else:
         n_tmp = n_pca
     # Check user's batch size
-    batch_size = helpers.check_pca_batches(loom_file=loom_file,
-                                           n_pca=n_pca,
-                                           batch_size=batch_size,
-                                           verbose=verbose)
+    batch_size = check_pca_batches(loom_file=loom_file,
+                                   n_pca=n_pca,
+                                   batch_size=batch_size,
+                                   verbose=verbose)
     # Perform PCA
     pca = IncrementalPCA(n_components=n_tmp)
     with loompy.connect(loom_file) as ds:
@@ -150,24 +149,24 @@ def batch_pca(loom_file,
                                     layers=layers,
                                     axis=1,
                                     batch_size=batch_size):
-            dat = helpers.prep_pca(view=view,
-                                   layer=layer,
-                                   row_idx=row_idx,
-                                   scale_attr=scale_attr)
+            dat = prep_pca(view=view,
+                           layer=layer,
+                           row_idx=row_idx,
+                           scale_attr=scale_attr)
             pca.partial_fit(dat)
         if verbose:
-            t_fit = time.time()
-            time_run, time_fmt = utils.format_run_time(t_start, t_fit)
+            t1 = time.time()
+            time_run, time_fmt = utils.format_run_time(t0, t1)
             decomp_log.info('Fit PCA in {0:.2f} {1}'.format(time_run, time_fmt))
         # Transform
         for (_, selection, view) in ds.scan(items=col_idx,
                                             layers=layers,
                                             axis=1,
                                             batch_size=batch_size):
-            dat = helpers.prep_pca(view=view,
-                                   layer=layer,
-                                   row_idx=row_idx,
-                                   scale_attr=scale_attr)
+            dat = prep_pca(view=view,
+                           layer=layer,
+                           row_idx=row_idx,
+                           scale_attr=scale_attr)
             dat = pca.transform(dat)
             if drop_first:
                 dat = dat[:, 1:]
@@ -181,7 +180,7 @@ def batch_pca(loom_file,
                                                          dtype=int)
         # Log
         if verbose:
-            t_tran = time.time()
-            time_run, time_fmt = utils.format_run_time(t_fit, t_tran)
+            t2 = time.time()
+            time_run, time_fmt = utils.format_run_time(t1, t2)
             decomp_log.info(
                 'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))

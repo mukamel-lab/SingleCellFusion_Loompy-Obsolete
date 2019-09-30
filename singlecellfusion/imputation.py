@@ -38,86 +38,6 @@ import os
 imp_log = logging.getLogger(__name__)
 
 
-def auto_find_mutual_k(loom_file,
-                       valid_ca=None,
-                       verbose=False):
-    """
-    Automatically determines the optimum k for mutual nearest neighbors
-
-    Args:
-        loom_file (str): Path to loom file
-        valid_ca (str): Optional, attribute specifying cells to include
-        verbose (bool): Print logging messages
-
-    Returns:
-        k (int): Optimum k for mutual nearest neighbors
-    """
-    valid_idx = utils.get_attr_index(loom_file=loom_file,
-                                     attr=valid_ca,
-                                     columns=True,
-                                     as_bool=True,
-                                     inverse=False)
-    k = np.ceil(0.01 * np.sum(valid_idx))
-    k = utils.round_unit(x=k,
-                         units=10,
-                         method='nearest')
-    k = np.min([200, k])
-    if verbose:
-        imp_log.info('{0} mutual k: {1}'.format(loom_file, k))
-    return k
-
-
-def auto_find_rescue_k(loom_file,
-                       valid_ca,
-                       verbose=False):
-    """
-    Automatically determines the optimum k for rescuing non-MNNs
-
-    Args:
-        loom_file (str): Path to loom file
-        valid_ca (str): Optional, attribute specifying cells to include
-        verbose (bool): Print logging messages
-
-    Returns:
-        k (int): Optimum k for rescue
-    """
-    valid_idx = utils.get_attr_index(loom_file=loom_file,
-                                     attr=valid_ca,
-                                     columns=True,
-                                     as_bool=True,
-                                     inverse=False)
-    k = np.ceil(0.001 * np.sum(valid_idx))
-    k = utils.round_unit(x=k,
-                         units=10,
-                         method='nearest')
-    k = np.min([50, k])
-    if verbose:
-        imp_log.info('{0} rescue k: {1}'.format(loom_file,
-                                                 k))
-    return k
-
-
-def check_ka(k,
-             ka):
-    """
-    Checks if the ka value is appropiate for the provided k
-
-    Args:
-        k (int): Number of nearest neighbors
-        ka (int): Nearest neighbor to normalize distances by
-
-    Returns:
-        ka (int): Nearest neighbor to normalize distances by
-            Corrected if ka >= k
-    """
-    if ka >= k:
-        imp_log.warning('ka is too large, resetting')
-        ka = np.ceil(0.5 * k)
-        imp_log.warning('New ka is {}'.format(ka))
-    else:
-        ka = ka
-    return ka
-
 def temp_zscore_loom(loom_file,
                      raw_layer,
                      feat_attr='Accession',
@@ -189,6 +109,12 @@ def temp_zscore_loom(loom_file,
                                    append=append_loom,
                                    empty_base=False,
                                    batch_size=batch_size)
+    # Add valid rows and columns
+    with loompy.connect(tmp_loom) as ds:
+        if valid_ca is not None:
+            ds.ca[valid_ca] = col_idx
+        if valid_ra is not None:
+            ds.ra[valid_ra] = row_idx
     # Log
     if verbose:
         t1 = time.time()
@@ -207,16 +133,17 @@ def add_mat_to_knn(mat,
 
     Args:
         mat (ndarray): Array of values to add to kNN
-        t (object): Annoy index
+        t (Annoy object): Annoy index
         start_idx (int): Start index for mat in t
             Useful when adding in batches
 
     Returns:
-        t (object): Annoy index
+        t (Annoy object): Annoy index
         new_idx (int): Last index added to t
     """
+    new_idx = start_idx
     for i, val in enumerate(mat):
-        new_idx = i + start_idx
+        new_idx += i
         t.add_item(new_idx, val)
     return t, new_idx
 
@@ -253,7 +180,7 @@ def get_knn_dist_and_idx(t,
     Gets the distances and indices from an Annoy kNN object
 
     Args:
-        t (object): Index for an Annoy kNN
+        t (Annoy object): Index for an Annoy kNN
         mat_test (ndarray): Matrix of values to test against kNN
             Used to find neighbors
         k (int): Nearest number of neighbors
@@ -313,13 +240,13 @@ def build_knn(t,
     Builds a forest of tress for kNN
 
     Args:
-        t (object): Annoy index for kNN
+        t (Annoy object): Annoy index for kNN
         n_trees (int): Number of trees to use for kNN
             More trees leads to higher precision
         verbose (bool): Print logging messages
 
     Returns:
-        t (object): Annoy index for kNN
+        t (Annoy object): Annoy index for kNN
     """
     if verbose:
         imp_log.info('Building kNN')
@@ -1064,58 +991,6 @@ def high_mem_gen_constrained_knn(dat_target,
     return knn_impute
 
 
-def high_mem_knn_impute(norm_target,
-                        norm_source,
-                        dat_source,
-                        n_neighbors=20,
-                        k_saturate=20,
-                        speed_factor=10,
-                        n_trees=10,
-                        seed=None,
-                        verbose=False):
-    """
-    Imputes data from a source into a target
-        Imputed counts are generated from source and provided to target
-
-    Args:
-        norm_target (df): Normalized counts from the target
-        norm_source (df): Normalized counts from the source
-        dat_source (df): Counts that will be used for imputation
-        n_neighbors (int): Number of neighbors to find
-        k_saturate (int): Maximum number of neighbors that can be received
-        speed_factor (int): Speed up code by this factor
-            Will increase memory consumption
-        n_trees (int): Number of trees to use for finding kNN
-            A larger number is more accurate but will use more memory
-        seed (int): Seed for randomization
-        verbose (bool): Print logging messages
-
-    Returns:
-        dat_impute (df): Dataframe of imputed counts
-    """
-    if verbose:
-        t0 = time.time()
-    # Get kNN
-    knn_impute = high_mem_gen_constrained_knn(dat_target=norm_target,
-                                              dat_source=norm_source,
-                                              n_neighbors=n_neighbors,
-                                              k_saturate=k_saturate,
-                                              speed_factor=speed_factor,
-                                              n_trees=n_trees,
-                                              seed=seed,
-                                              verbose=verbose)
-    # Impute data
-    dat_impute = pd.DataFrame(knn_impute.dot(dat_source.values),
-                              index=norm_target.index.values,
-                              columns=norm_target.columns.values)
-    if verbose:
-        t1 = time.time()
-        time_run, time_fmt = utils.format_run_time(t0, t1)
-        imp_log.info('Imputed data in {0:.2f} {1}'.format(time_run,
-                                                          time_fmt))
-    return dat_impute
-
-
 def normalize_dat(dat,
                   mod_sign=1):
     """
@@ -1135,24 +1010,24 @@ def normalize_dat(dat,
     return norm
 
 
-def high_mem_single_impute(loom_source,
-                           dat_source,
-                           norm_source,
-                           loom_target,
-                           layer_target,
-                           feat_target,
-                           cell_target,
-                           valid_ra_target,
-                           valid_ca_target,
-                           layer_impute,
-                           correlation,
-                           remove_version,
-                           n_neighbors,
-                           relaxation,
-                           speed_factor,
-                           n_trees,
-                           seed,
-                           verbose):
+def high_mem_knn_impute(loom_source,
+                        dat_source,
+                        norm_source,
+                        loom_target,
+                        layer_target,
+                        feat_target,
+                        cell_target,
+                        valid_ra_target,
+                        valid_ca_target,
+                        layer_impute,
+                        correlation,
+                        remove_version,
+                        n_neighbors,
+                        relaxation,
+                        speed_factor,
+                        n_trees,
+                        seed,
+                        verbose):
     """
     Imputes data in one direction for one pair of data
 
@@ -1187,6 +1062,8 @@ def high_mem_single_impute(loom_source,
         mod_sign = -1
     elif correlation.lower() in ['pos', 'positive', '+']:
         mod_sign = 1
+    else:
+        raise ValueError('Unsupported correlation value ({})'.format(correlation))
     # Get target data
     dat_target = get_dat_df(loom_file=loom_target,
                             layer=layer_target,
@@ -1212,15 +1089,18 @@ def high_mem_single_impute(loom_source,
     n_source = dat_source.shape[0]
     k_saturate = int((n_target / n_source) * n_neighbors * relaxation) + 1
     # Impute data
-    imputed = high_mem_knn_impute(norm_target=norm_target,
-                                  norm_source=norm_source,
-                                  dat_source=dat_source,
-                                  n_neighbors=n_neighbors,
-                                  k_saturate=k_saturate,
-                                  speed_factor=speed_factor,
-                                  n_trees=n_trees,
-                                  seed=seed,
-                                  verbose=verbose)
+    knn_impute = high_mem_gen_constrained_knn(dat_target=norm_target,
+                                              dat_source=norm_source,
+                                              n_neighbors=n_neighbors,
+                                              k_saturate=k_saturate,
+                                              speed_factor=speed_factor,
+                                              n_trees=n_trees,
+                                              seed=seed,
+                                              verbose=verbose)
+    # Impute data
+    imputed = pd.DataFrame(knn_impute.dot(dat_source.values),
+                           index=norm_target.index.values,
+                           columns=norm_target.columns.values)
     # Get lookup
     with loompy.connect(loom_target) as ds:
         n_feat = ds.shape[0]
@@ -1377,43 +1257,163 @@ def high_mem_constrained_1d(loom_source,
     # Impute for each target
     if is_a_list:
         for i in np.arange(len(loom_target)):
-            high_mem_single_impute(loom_source=loom_source,
-                                   dat_source=dat_source,
-                                   norm_source=norm_source,
-                                   loom_target=loom_target[i],
-                                   layer_target=layer_target[i],
-                                   feat_target=feat_target[i],
-                                   cell_target=cell_target[i],
-                                   valid_ra_target=valid_ra_target[i],
-                                   valid_ca_target=valid_ca_target[i],
-                                   layer_impute=layer_impute[i],
-                                   correlation=correlation[i],
-                                   remove_version=remove_version[i],
-                                   n_neighbors=n_neighbors[i],
-                                   relaxation=relaxation[i],
-                                   speed_factor=speed_factor[i],
-                                   n_trees=n_trees,
-                                   seed=seed,
-                                   verbose=verbose)
+            high_mem_knn_impute(loom_source=loom_source,
+                                dat_source=dat_source,
+                                norm_source=norm_source,
+                                loom_target=loom_target[i],
+                                layer_target=layer_target[i],
+                                feat_target=feat_target[i],
+                                cell_target=cell_target[i],
+                                valid_ra_target=valid_ra_target[i],
+                                valid_ca_target=valid_ca_target[i],
+                                layer_impute=layer_impute[i],
+                                correlation=correlation[i],
+                                remove_version=remove_version[i],
+                                n_neighbors=n_neighbors[i],
+                                relaxation=relaxation[i],
+                                speed_factor=speed_factor[i],
+                                n_trees=n_trees,
+                                seed=seed,
+                                verbose=verbose)
     else:
-        high_mem_single_impute(loom_source=loom_source,
-                               dat_source=dat_source,
-                               norm_source=norm_source,
-                               loom_target=loom_target,
-                               layer_target=layer_target,
-                               feat_target=feat_target,
-                               cell_target=cell_target,
-                               valid_ra_target=valid_ra_target,
-                               valid_ca_target=valid_ca_target,
-                               layer_impute=layer_impute,
-                               correlation=correlation,
-                               remove_version=remove_version,
-                               n_neighbors=n_neighbors,
-                               relaxation=relaxation,
-                               speed_factor=speed_factor,
-                               n_trees=n_trees,
-                               seed=seed,
-                               verbose=verbose)
+        high_mem_knn_impute(loom_source=loom_source,
+                            dat_source=dat_source,
+                            norm_source=norm_source,
+                            loom_target=loom_target,
+                            layer_target=layer_target,
+                            feat_target=feat_target,
+                            cell_target=cell_target,
+                            valid_ra_target=valid_ra_target,
+                            valid_ca_target=valid_ca_target,
+                            layer_impute=layer_impute,
+                            correlation=correlation,
+                            remove_version=remove_version,
+                            n_neighbors=n_neighbors,
+                            relaxation=relaxation,
+                            speed_factor=speed_factor,
+                            n_trees=n_trees,
+                            seed=seed,
+                            verbose=verbose)
+
+
+def low_mem_knn_impute(loom_source,
+                       layer_source,
+                       zscore_source,
+                       feat_source,
+                       valid_ra_source,
+                       valid_ca_source,
+                       loom_target,
+                       layer_target,
+                       feat_target,
+                       valid_ra_target,
+                       valid_ca_target,
+                       layer_impute,
+                       correlation,
+                       remove_version,
+                       n_neighbors,
+                       relaxation,
+                       speed_factor,
+                       n_trees,
+                       batch_size,
+                       seed,
+                       tmp_dir,
+                       verbose):
+    """
+    Imputes data in one direction for one pair of data in a slow, low memory fashion
+
+    Args:
+        loom_source (str): Path to loom file that will provide counts to others
+        layer_source (str): Layer in loom_source that will provide counts
+        zscore_source (str): Path to loom file containing z-scored data
+        feat_source (str): Row attribute containing unique feature IDs
+        valid_ra_source (str): Row attribute specifying features that can be used
+        valid_ca_source (str): Column attribute specifying cells that can be used
+        loom_target (str/list): Path(s) to loom files that will receive imputed counts
+        layer_target (str): Layer in loom_target that contains counts for correlations
+        feat_target (str): Row attribute containing unique feature IDs
+        valid_ra_target (str): Row attribute specifying features that can be used
+        valid_ca_target (str): Column attribute specifying cells that can be used
+        layer_impute (str): Output layer for loom_target that will receive imputed counts
+        correlation (str): Expected correlation (negative/-, positive/+)
+        remove_version (bool): If true, remove GENCODE version ID from feat_source/feat_target
+        n_neighbors (int): Minimum number of nearest neighbors to make
+        relaxation (int): Factor for relaxing saturation limit
+        speed_factor (int): Factor for speeding up kNN search
+        n_trees (int): Number of trees for kNN search
+        batch_size (int): Size of chunks for batch iterations
+        seed (int): Seed for randomization
+        tmp_dir (str): Path to output directory
+        verbose (bool): If true, print logging messages
+
+    """
+    # Start log
+    if verbose:
+        t0 = time.time()
+        imp_log.info('Imputing from {0} to {1}'.format(loom_source,
+                                                       loom_target))
+    # Get correlation
+    if correlation.lower() in ['neg', 'negative', '-']:
+        reverse_rank = True
+    elif correlation.lower() in ['pos', 'positive', '+']:
+        reverse_rank = False
+    else:
+        raise ValueError('Unsupported value for correlation ({})'.format(correlation))
+    # Generate constrained kNN
+    low_mem_constrained_knn(loom_target=loom_target,
+                            knn_index='imputed_knn',  # hack for now, will be overwritten each time
+                            layer_target=layer_target,
+                            valid_ca_target=valid_ca_target,
+                            valid_ra_target=valid_ra_target,
+                            feature_target=feat_target,
+                            loom_source=loom_source,
+                            zscore_source=zscore_source,
+                            valid_ca_source=valid_ca_source,
+                            valid_ra_source=valid_ra_source,
+                            feature_source=feat_source,
+                            n_neighbors=n_neighbors,
+                            reverse_rank=reverse_rank,
+                            speed_factor=speed_factor,
+                            relaxation=relaxation,
+                            n_trees=n_trees,
+                            batch_size=batch_size,
+                            remove_version=remove_version,
+                            seed=seed,
+                            tmp_dir=tmp_dir,
+                            verbose=verbose)
+    # Impute data
+    low_mem_impute_data(loom_source=loom_source,
+                        layer_source=layer_source,
+                        feat_source=feat_source,
+                        valid_ca_source=valid_ca_source,
+                        valid_ra_source=valid_ra_source,
+                        loom_target=loom_target,
+                        layer_impute=layer_impute,
+                        feat_target=feat_target,
+                        valid_ca_target=valid_ca_target,
+                        valid_ra_target=valid_ra_target,
+                        neighbor_index_target='imputed_knn',  # hack for now, will be overwritten each time
+                        neighbor_index_source=None,
+                        k_src_tar=None,
+                        k_tar_src=None,
+                        k_rescue=None,
+                        ka=None,
+                        epsilon=None,
+                        pca_attr=None,
+                        neighbor_method='knn',
+                        remove_version=remove_version,
+                        offset=1e-5,
+                        seed=seed,
+                        batch_size=batch_size,
+                        verbose=verbose)
+
+    # Log
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = utils.format_run_time(t0, t1)
+        imp_log.info('Imputed from {0} to {1} in {2:.2f} {3}'.format(loom_source,
+                                                                     loom_target,
+                                                                     time_run,
+                                                                     time_fmt))
 
 
 def low_mem_constrained_1d(loom_source,
@@ -1530,51 +1530,51 @@ def low_mem_constrained_1d(loom_source,
     # Impute for each target
     if is_a_list:
         for i in np.arange(len(loom_target)):
-            low_mem_single_impute(loom_source=loom_source,
-                                  layer_source=layer_source,
-                                  zscore_source=zscore_source,
-                                  feat_source=feat_source,
-                                  valid_ra_source=valid_ra_source,
-                                  valid_ca_source=valid_ca_source,
-                                  loom_target=loom_target[i],
-                                  layer_target=layer_target[i],
-                                  feat_target=feat_target[i],
-                                  valid_ra_target=valid_ra_target[i],
-                                  valid_ca_target=valid_ca_target[i],
-                                  layer_impute=layer_impute[i],
-                                  correlation=correlation[i],
-                                  remove_version=remove_version[i],
-                                  n_neighbors=n_neighbors,
-                                  relaxation=relaxation,
-                                  speed_factor=speed_factor,
-                                  n_trees=n_trees,
-                                  batch_size=batch_size,
-                                  seed=seed,
-                                  tmp_dir=tmp_dir,
-                                  verbose=verbose)
+            low_mem_knn_impute(loom_source=loom_source,
+                               layer_source=layer_source,
+                               zscore_source=zscore_source,
+                               feat_source=feat_source,
+                               valid_ra_source=valid_ra_source,
+                               valid_ca_source=valid_ca_source,
+                               loom_target=loom_target[i],
+                               layer_target=layer_target[i],
+                               feat_target=feat_target[i],
+                               valid_ra_target=valid_ra_target[i],
+                               valid_ca_target=valid_ca_target[i],
+                               layer_impute=layer_impute[i],
+                               correlation=correlation[i],
+                               remove_version=remove_version[i],
+                               n_neighbors=n_neighbors,
+                               relaxation=relaxation,
+                               speed_factor=speed_factor,
+                               n_trees=n_trees,
+                               batch_size=batch_size,
+                               seed=seed,
+                               tmp_dir=tmp_dir,
+                               verbose=verbose)
     else:
-        low_mem_single_impute(loom_source=loom_source,
-                              layer_source=layer_source,
-                              zscore_source=zscore_source,
-                              feat_source=feat_source,
-                              valid_ra_source=valid_ra_source,
-                              valid_ca_source=valid_ca_source,
-                              loom_target=loom_target,
-                              layer_target=layer_target,
-                              feat_target=feat_target,
-                              valid_ra_target=valid_ra_target,
-                              valid_ca_target=valid_ca_target,
-                              layer_impute=layer_impute,
-                              correlation=correlation,
-                              remove_version=remove_version,
-                              n_neighbors=n_neighbors,
-                              relaxation=relaxation,
-                              speed_factor=speed_factor,
-                              n_trees=n_trees,
-                              batch_size=batch_size,
-                              seed=seed,
-                              tmp_dir=tmp_dir,
-                              verbose=verbose)
+        low_mem_knn_impute(loom_source=loom_source,
+                           layer_source=layer_source,
+                           zscore_source=zscore_source,
+                           feat_source=feat_source,
+                           valid_ra_source=valid_ra_source,
+                           valid_ca_source=valid_ca_source,
+                           loom_target=loom_target,
+                           layer_target=layer_target,
+                           feat_target=feat_target,
+                           valid_ra_target=valid_ra_target,
+                           valid_ca_target=valid_ca_target,
+                           layer_impute=layer_impute,
+                           correlation=correlation,
+                           remove_version=remove_version,
+                           n_neighbors=n_neighbors,
+                           relaxation=relaxation,
+                           speed_factor=speed_factor,
+                           n_trees=n_trees,
+                           batch_size=batch_size,
+                           seed=seed,
+                           tmp_dir=tmp_dir,
+                           verbose=verbose)
     # Clean-up files
     os.remove(zscore_source)
 
@@ -1761,21 +1761,21 @@ def low_mem_impute_data(loom_source,
         loom_source (str): Name of loom file that contains observed count data
         layer_source (str/list): Layer(s) containing observed count data
         feat_source (str): Row attribute specifying unique feature IDs
-        valid_ca_source (str): Column attribute specifying columns to include
-        valid_ra_source (str): Row attribute specifying rows to include
+        valid_ca_source (str/None): Column attribute specifying columns to include
+        valid_ra_source (str/None): Row attribute specifying rows to include
         loom_target (str): Name of loom file that will receive imputed counts
         layer_impute (str/list): Layer(s) that will contain imputed count data
         feat_target (str): Row attribute specifying unique feature IDs
-        valid_ca_target (str): Column attribute specifying columns to include
-        valid_ra_target (str): Row attribute specifying rows to include
+        valid_ca_target (str/None): Column attribute specifying columns to include
+        valid_ra_target (str/None): Row attribute specifying rows to include
         neighbor_index_target (str): Attribute containing indices for MNNs
-        neighbor_index_source (str): Attribute containing indices for MNNs
-        k_src_tar (int): Number of nearest neighbors for MNNs
-        k_tar_src (int): Number of nearest neighbors for MNNs
-        k_rescue (int): Number of nearest neighbors for rescue
-        ka (int): If rescue, neighbor to normalize by
-        epsilon (float): If rescue, epsilon value for Gaussian kernel
-        pca_attr (str): If rescue, attribute containing PCs
+        neighbor_index_source (str/None): Attribute containing indices for MNNs
+        k_src_tar (int/None): Number of nearest neighbors for MNNs
+        k_tar_src (int/None): Number of nearest neighbors for MNNs
+        k_rescue (int/None): Number of nearest neighbors for rescue
+        ka (int/None): If rescue, neighbor to normalize by
+        epsilon (float/None): If MNN methods, epsilon value for Gaussian kernel
+        pca_attr (str/None): If MNN methods, attribute containing PCs
         neighbor_method (str): How cells are chosen for imputation
             mnn_direct - include cells that did not make MNNs
             mnn_rescue - only include cells that made MNNs
@@ -1897,63 +1897,352 @@ def low_mem_impute_data(loom_source,
         imp_log.info('Imputed data in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
-def low_mem_single_impute(loom_source,
-                          layer_source,
-                          zscore_source,
-                          feat_source,
-                          valid_ra_source,
-                          valid_ca_source,
-                          loom_target,
-                          layer_target,
-                          feat_target,
-                          valid_ra_target,
-                          valid_ca_target,
-                          layer_impute,
-                          correlation,
-                          remove_version,
-                          n_neighbors,
-                          relaxation,
-                          speed_factor,
-                          n_trees,
-                          batch_size,
-                          seed,
-                          tmp_dir,
-                          verbose):
+def auto_find_k(loom_file,
+                valid_ca,
+                fraction,
+                min_num,
+                verbose):
+    """
+    Automatically finds an appropriate k value
+
+    Args:
+        loom_file (str): Path to loom file
+        valid_ca (str): Row attribute specifying valid cells
+        fraction (float): Find this fraction of cells
+        min_num (int): Minimum k size
+        verbose (bool): If true, print logging messages
+    """
+    # Get cell number
+    cell_num = np.sum(utils.get_attr_index(loom_file=loom_file,
+                                           attr=valid_ca,
+                                           columns=True,
+                                           as_bool=True,
+                                           inverse=False))
+    # Get fraction
+    k = np.ceil(fraction * cell_num)
+    # Round to nearest 10
+    k = utils.round_nit(x=k,
+                        units=10,
+                        method='nearest')
+    # Check minimum
+    k = np.min([min_num, k])
+    # Log
+    if verbose:
+        imp_log.info('{0} mutual k = {1}'.format(loom_file,
+                                                 k))
+    return k
+
+
+def check_ka(k,
+             ka):
+    """
+    Checks if the ka value is appropiate for the provided k
+
+    Args:
+        k (int): Number of nearest neighbors
+        ka (int): Nearest neighbor to normalize distances by
+
+    Returns:
+        ka (int): Nearest neighbor to normalize distances by
+            Corrected if ka >= k
+    """
+    if ka >= k:
+        imp_log.warning('ka is too large, resetting')
+        ka = np.ceil(0.5 * k)
+        if ka == k:
+            raise ValueError('k value is too low')
+        imp_log.warning('New ka is {}'.format(ka))
+    else:
+        ka = ka
+    return ka
+
+
+def low_mem_get_mnn(loom_target,
+                    layer_target,
+                    neighbor_distance_target,
+                    neighbor_index_target,
+                    max_k_target,
+                    loom_source,
+                    zscore_source,
+                    neighbor_distance_source,
+                    neighbor_index_source,
+                    max_k_source,
+                    correlation,
+                    feature_id_target,
+                    feature_id_source,
+                    valid_ca_target=None,
+                    valid_ra_target=None,
+                    valid_ca_source=None,
+                    valid_ra_source=None,
+                    n_trees=10,
+                    seed=None,
+                    batch_size=5000,
+                    remove_version=False,
+                    tmp_dir=None,
+                    verbose=False):
+    """
+    Gets kNN distances and indices by iterating over a loom file
+
+    Args:
+        loom_target (str): Path to loom file
+        layer_target (str): Layer containing data for loom_target
+        neighbor_distance_target (str): Output attribute for distances
+        neighbor_index_target (str): Output attribute for indices
+        max_k_target (int): Maximum number of nearest neighbors for target
+        loom_source (str): Path to loom file
+        zscore_source (str): Path to temporary loom file containing z-scored data
+        neighbor_distance_source (str): Output attribute for distances
+        neighbor_index_source (str): Output attribute for indices
+        max_k_source  (int): Maximum number of nearest neighbors for source
+        correlation (str): Expected direction of relationship
+            positive or +
+            negative or -
+        feature_id_target (str): Row attribute containing unique feature IDs
+        feature_id_source (str): Row attribute containing unique feature IDs
+        valid_ca_target (str): Column attribute specifying valid cells
+        valid_ra_target (str): Row attribute specifying valid features
+        valid_ca_source (str): Column attribute specifying valid cells
+        valid_ra_source (str): Row attribute specifying valid features
+        n_trees (int): Number of trees to use for kNN
+            more trees = more precision
+        seed (int): Seed for Annoy
+        batch_size (int): Size of chunks for iterating
+        remove_version (bool): Remove GENCODE version IDs
+        tmp_dir (str/None): Path to output directory for temporary files
+            If None, writes to system default
+        verbose (bool): Print logging messages
+    """
+    # Prep for function
+    if verbose:
+        imp_log.info('Finding MNN distances and indices')
+        t0 = time.time()
+    # Prep for kNN
+    col_target = utils.get_attr_index(loom_file=loom_target,
+                                      attr=valid_ca_target,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_target = utils.get_attr_index(loom_file=loom_target,
+                                      attr=valid_ra_target,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    col_source = utils.get_attr_index(loom_file=loom_source,
+                                      attr=valid_ca_source,
+                                      columns=True,
+                                      as_bool=True,
+                                      inverse=False)
+    row_source = utils.get_attr_index(loom_file=loom_source,
+                                      attr=valid_ra_source,
+                                      columns=False,
+                                      as_bool=True,
+                                      inverse=False)
+    # Make lookup
+    lookup_target = pd.Series(np.where(col_target)[0],
+                              index=np.arange(np.sum(col_target)))
+    lookup_source = pd.Series(np.where(col_source)[0],
+                              index=np.arange(np.sum(col_source)))
+
+    # Get features
+    with loompy.connect(filename=loom_target) as ds:
+        target_feat = ds.ra[feature_id_target][row_target]
+    with loompy.connect(filename=loom_source) as ds:
+        source_feat = ds.ra[feature_id_source][row_source]
+    if remove_version:
+        target_feat = utils.remove_gene_version(target_feat)
+        source_feat = utils.remove_gene_version(source_feat)
+    if np.any(np.sort(target_feat) != np.sort(source_feat)):
+        raise ValueError('Feature mismatch!')
+    if correlation.lower() in ['neg', 'negative', '-']:
+        reverse_rank = True
+    elif correlation.lower() in ['pos', 'positive', '+']:
+        reverse_rank = False
+    else:
+        raise ValueError('Unsupported correlation value ({})'.format(correlation))
+    # Make temporary files holding zscores
+    zscore_target = temp_zscore_loom(loom_file=loom_target,
+                                     raw_layer=layer_target,
+                                     feat_attr=feature_id_target,
+                                     valid_ca=valid_ca_target,
+                                     valid_ra=valid_ra_target,
+                                     batch_size=batch_size,
+                                     tmp_dir=tmp_dir,
+                                     verbose=verbose)
+    # Train kNN
+    t_s2t = train_knn(loom_file=zscore_target,
+                      layer='',
+                      row_arr=row_target,
+                      col_arr=col_target,
+                      feat_attr=feature_id_target,
+                      feat_select=target_feat,
+                      reverse_rank=reverse_rank,
+                      remove_version=remove_version,
+                      seed=seed,
+                      batch_size=batch_size,
+                      verbose=verbose)
+    t_t2s = train_knn(loom_file=zscore_source,
+                      layer='',
+                      row_arr=row_source,
+                      col_arr=col_source,
+                      feat_attr=feature_id_source,
+                      feat_select=source_feat,
+                      reverse_rank=False,
+                      remove_version=remove_version,
+                      seed=seed,
+                      batch_size=batch_size,
+                      verbose=verbose)
+    # Build trees
+    t_t2s = build_knn(t=t_t2s,
+                      n_trees=n_trees,
+                      verbose=verbose)
+    t_s2t = build_knn(t=t_s2t,
+                      n_trees=n_trees,
+                      verbose=verbose)
+    # Get distances and indices
+    dist_target, idx_target = report_knn(loom_file=zscore_target,
+                                         layer='',
+                                         row_arr=row_target,
+                                         col_arr=col_target,
+                                         feat_attr=feature_id_target,
+                                         feat_select=target_feat,
+                                         reverse_rank=False,
+                                         k=max_k_target,
+                                         t=t_t2s,
+                                         batch_size=batch_size,
+                                         remove_version=remove_version,
+                                         verbose=verbose)
+    dist_source, idx_source = report_knn(loom_file=zscore_source,
+                                         layer='',
+                                         row_arr=row_source,
+                                         col_arr=col_source,
+                                         feat_attr=feature_id_source,
+                                         feat_select=source_feat,
+                                         reverse_rank=reverse_rank,
+                                         k=max_k_source,
+                                         t=t_s2t,
+                                         batch_size=batch_size,
+                                         remove_version=remove_version,
+                                         verbose=verbose)
+    # Get correct indices (import if restricted to valid cells)
+    correct_idx_target = np.reshape(lookup_source.loc[np.ravel(idx_target).astype(int)].values,
+                                    idx_target.shape)
+    correct_idx_source = np.reshape(lookup_target.loc[np.ravel(idx_source).astype(int)].values,
+                                    idx_source.shape)
+    # Add data to files
+    with loompy.connect(filename=loom_target) as ds:
+        ds.ca[neighbor_distance_target] = dist_target
+        ds.ca[neighbor_index_target] = correct_idx_target
+    with loompy.connect(filename=loom_source) as ds:
+        ds.ca[neighbor_distance_source] = dist_source
+        ds.ca[neighbor_index_source] = correct_idx_source
+    # Remove temporary files
+    os.remove(zscore_target)
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = utils.format_run_time(t0, t1)
+        imp_log.info(
+            'Found neighbors in {0:.2f} {1}'.format(time_run, time_fmt))
+
+
+def low_mem_mnn_impute(loom_source,
+                       layer_source,
+                       zscore_source,
+                       feat_source,
+                       valid_ra_source,
+                       valid_ca_source,
+                       loom_target,
+                       layer_target,
+                       feat_target,
+                       valid_ra_target,
+                       valid_ca_target,
+                       layer_impute,
+                       correlation,
+                       pca_target,
+                       neighbor_method,
+                       remove_version,
+                       n_trees,
+                       batch_size,
+                       seed,
+                       tmp_dir,
+                       verbose):
     """
     Imputes data in one direction for one pair of data in a slow, low memory fashion
+
+    Args:
+        loom_source (str): Path to loom file that will provide counts to others
+        layer_source (str): Layer in loom_source that will provide counts
+        zscore_source (str): Path to loom file containing z-scored data
+        feat_source (str): Row attribute containing unique feature IDs
+        valid_ra_source (str): Row attribute specifying features that can be used
+        valid_ca_source (str): Column attribute specifying cells that can be used
+        loom_target (str/list): Path(s) to loom files that will receive imputed counts
+        layer_target (str): Layer in loom_target that contains counts for correlations
+        feat_target (str): Row attribute containing unique feature IDs
+        valid_ra_target (str): Row attribute specifying features that can be used
+        valid_ca_target (str): Column attribute specifying cells that can be used
+        layer_impute (str): Output layer for loom_target that will receive imputed counts
+        correlation (str): Expected correlation (negative/-, positive/+)
+        pca_target (str/None): If mnn_rescue, attribute containing PCs in loom_target
+        neighbor_method (str): How cells are chosen for imputation
+            mnn_direct - include cells that did not make MNNs
+            mnn_rescue - only include cells that made MNNs
+            knn - use a restricted knn search to find neighbors
+        remove_version (bool): If true, remove GENCODE version ID from feat_source/feat_target
+        n_trees (int): Number of trees for kNN search
+        batch_size (int): Size of chunks for batch iterations
+        seed (int): Seed for randomization
+        tmp_dir (str): Path to output directory
+        verbose (bool): If true, print logging messages
+
     """
     # Start log
     if verbose:
         t0 = time.time()
         imp_log.info('Imputing from {0} to {1}'.format(loom_source,
                                                        loom_target))
-    # Get correlation
-    if correlation.lower() in ['neg', 'negative', '-']:
-        reverse_rank = True
-    elif correlation.lower() in ['pos', 'positive', '+']:
-        reverse_rank = False
-    # Generate constrained kNN
-    low_mem_constrained_knn(loom_target=loom_target,
-                            knn_index='imputed_knn',  # hack for now, will be overwritten each time
-                            layer_target=layer_target,
-                            valid_ca_target=valid_ca_target,
-                            valid_ra_target=valid_ra_target,
-                            feature_target=feat_target,
-                            loom_source=loom_source,
-                            zscore_source=zscore_source,
-                            valid_ca_source=valid_ca_source,
-                            valid_ra_source=valid_ra_source,
-                            feature_source=feat_source,
-                            n_neighbors=n_neighbors,
-                            reverse_rank=reverse_rank,
-                            speed_factor=speed_factor,
-                            relaxation=relaxation,
-                            n_trees=n_trees,
-                            batch_size=batch_size,
-                            remove_version=remove_version,
-                            seed=seed,
-                            tmp_dir=tmp_dir,
-                            verbose=verbose)
+    # Determine k-values (hack, in future should let user chose)
+    mutual_k_target = auto_find_k(loom_file=loom_target,
+                                  valid_ca=valid_ca_target,
+                                  fraction=0.01,
+                                  min_num=200,
+                                  verbose=verbose)
+    mutual_k_source = auto_find_k(loom_file=loom_source,
+                                  valid_ca=valid_ca_source,
+                                  fraction=0.01,
+                                  min_num=200,
+                                  verbose=verbose)
+    mutual_k_max = np.max([mutual_k_target, mutual_k_source])
+    rescue_k_target = auto_find_k(loom_file=loom_target,
+                                  valid_ca=valid_ca_target,
+                                  fraction=0.001,
+                                  min_num=50,
+                                  verbose=verbose)
+    ka_target = check_ka(k=rescue_k_target,
+                         ka=5)
+    # Get MNNs
+    low_mem_get_mnn(loom_target=loom_target,
+                    layer_target=layer_target,
+                    neighbor_distance_target='mnn_dist',  # hack, need to update
+                    neighbor_index_target='mnn_index',  # hack, need to update
+                    max_k_target=mutual_k_max,
+                    loom_source=loom_source,
+                    zscore_source=zscore_source,
+                    neighbor_distance_source='mnn_dist',  # hack, need to update
+                    neighbor_index_source='mnn_index',  # hack, need to update
+                    max_k_source=mutual_k_max,
+                    correlation=correlation,
+                    feature_id_target=feat_target,
+                    feature_id_source=feat_source,
+                    valid_ca_target=valid_ca_target,
+                    valid_ra_target=valid_ra_target,
+                    valid_ca_source=valid_ca_source,
+                    valid_ra_source=valid_ra_source,
+                    n_trees=n_trees,
+                    seed=seed,
+                    batch_size=batch_size,
+                    remove_version=remove_version,
+                    tmp_dir=tmp_dir,
+                    verbose=verbose)
     # Impute data
     low_mem_impute_data(loom_source=loom_source,
                         layer_source=layer_source,
@@ -1965,15 +2254,15 @@ def low_mem_single_impute(loom_source,
                         feat_target=feat_target,
                         valid_ca_target=valid_ca_target,
                         valid_ra_target=valid_ra_target,
-                        neighbor_index_target='imputed_knn',  # hack for now, will be overwritten each time
-                        neighbor_index_source=None,
-                        k_src_tar=None,
-                        k_tar_src=None,
-                        k_rescue=None,
-                        ka=None,
-                        epsilon=None,
-                        pca_attr=None,
-                        neighbor_method='knn',
+                        neighbor_index_target='mnn_dist',  # hack, need to update
+                        neighbor_index_source='mnn_index',  # hack, need to update
+                        k_src_tar=mutual_k_source,
+                        k_tar_src=mutual_k_target,
+                        k_rescue=rescue_k_target,
+                        ka=ka_target,
+                        epsilon=1,  # hack, need to update
+                        pca_attr=pca_target,
+                        neighbor_method=neighbor_method,
                         remove_version=remove_version,
                         offset=1e-5,
                         seed=seed,
@@ -1990,6 +2279,162 @@ def low_mem_single_impute(loom_source,
                                                                      time_fmt))
 
 
+def low_mem_mnn_1d(loom_source,
+                   loom_target,
+                   layer_source='',
+                   layer_target='',
+                   layer_impute='imputed',
+                   correlation='positive',
+                   feat_source='Accession',
+                   feat_target='Accession',
+                   cell_target='CellID',
+                   pca_target=None,
+                   valid_ra_source=None,
+                   valid_ra_target=None,
+                   valid_ca_source=None,
+                   valid_ca_target=None,
+                   neighbor_method='mnn_rescue',
+                   n_trees=10,
+                   remove_version=False,
+                   tmp_dir=None,
+                   batch_size=5000,
+                   seed=None,
+                   verbose=False):
+    """
+    Imputes data from a given data modality (source) into another (target) with low memory but slowly
+
+    Args:
+        loom_source (str): Path to loom file that will provide counts to others
+        loom_target (str/list): Path(s) to loom files that will receive imputed counts
+        layer_source (str): Layer in loom_source that will provide counts
+        layer_target (str/list): Layer(s) in loom_target files specifying counts
+            Used for finding correlations between loom files
+        layer_impute (str/list): Output layer in loom_target
+            A row attribute with the format Valid_{layer_out} will be added
+            A col attribute with the format Valid_{layer_out} will be added
+        correlation (str/list): Expected correlation between loom_source and loom_target
+            positive/+ for RNA-seq and ATAC-seq
+            negative/- for RNA-seq or ATAC-seq and snmC-seq
+        feat_source (str): Row attribute specifying unique feature names in loom_source
+        feat_target (str/list): Row attribute(s) specifying unique feature names in loom_target
+        cell_target (str/list): Column attribute specifying unique cell IDs in loom_target
+        pca_target (str/list/None): Column attribute containing PCs in loom_target
+            Used if neighbor_method == mnn_rescue
+        valid_ra_source (str): Row attribute specifying valid features in loom_source
+            Should point to a boolean array
+        valid_ra_target (str/list): Row attribute(s) specifying valid features in loom_target
+            Should point to a boolean array
+        valid_ca_source (str): Column attribute specifying valid cells in loom_source
+            Should point to a boolean array
+        valid_ca_target (str/list): Column attribute(s) specifying valid cells in loom_target
+            Should point to a boolean array
+        neighbor_method (str): How cells are chosen for imputation
+            mnn_direct - include cells that did not make MNNs
+            mnn_rescue - only include cells that made MNNs
+        n_trees (int): Number of trees for approximate kNN search
+            See Annoy documentation
+        remove_version (bool/list): If true remove version number
+            Anything after the first period is dropped (useful for GENCODE IDs)
+            If a list, will behave differently for each loom file
+            If a boolean, will behave the same for each loom_file
+        tmp_dir (str): Optional, path to output directory for temporary files
+            If None, uses default temporary directory on your system
+        batch_size (int): Number of elements per chunk when analyzing in batches
+        seed (int): Initialization for random seed
+        verbose (bool): Print logging messages
+    """
+    # Check inputs
+    is_a_list = False
+    if isinstance(loom_target, list):
+        utils.all_same_type_size(parameters=[loom_target,
+                                             layer_target,
+                                             correlation],
+                                 expected_type='list',
+                                 confirm_size=True)
+        check_parameters = [feat_target,
+                            valid_ra_target,
+                            valid_ca_target,
+                            remove_version,
+                            layer_impute,
+                            pca_target]
+        checked = utils.mimic_list(parameters=check_parameters,
+                                   list_len=len(loom_target))
+        feat_target = checked[0]
+        valid_ra_target = checked[1]
+        valid_ca_target = checked[2]
+        remove_version = checked[3]
+        layer_impute = checked[4]
+        pca_target = checked[5]
+        is_a_list = True
+    elif isinstance(loom_target, str):
+        utils.all_same_type_size(parameters=[loom_target,
+                                             layer_target,
+                                             correlation,
+                                             feat_target,
+                                             cell_target],
+                                 expected_type='str',
+                                 confirm_size=False)
+    if verbose:
+        imp_log.info('Preparing for imputation')
+    # Get source z-scored loom file
+    zscore_source = temp_zscore_loom(loom_file=loom_source,
+                                     raw_layer=layer_source,
+                                     feat_attr=feat_source,
+                                     valid_ca=valid_ca_source,
+                                     valid_ra=valid_ra_source,
+                                     batch_size=batch_size,
+                                     tmp_dir=tmp_dir,
+                                     verbose=verbose)
+    # Impute for each target
+    if is_a_list:
+        for i in np.arange(len(loom_target)):
+            low_mem_mnn_impute(loom_source=loom_source,
+                               layer_source=layer_source,
+                               zscore_source=zscore_source,
+                               feat_source=feat_source,
+                               valid_ra_source=valid_ra_source,
+                               valid_ca_source=valid_ca_source,
+                               loom_target=loom_target[i],
+                               layer_target=layer_target[i],
+                               feat_target=feat_target[i],
+                               valid_ra_target=valid_ra_target[i],
+                               valid_ca_target=valid_ca_target[i],
+                               layer_impute=layer_impute[i],
+                               correlation=correlation[i],
+                               neighbor_method=neighbor_method,
+                               pca_target=pca_target[i],
+                               remove_version=remove_version[i],
+                               n_trees=n_trees,
+                               batch_size=batch_size,
+                               seed=seed,
+                               tmp_dir=tmp_dir,
+                               verbose=verbose)
+    else:
+        low_mem_mnn_impute(loom_source=loom_source,
+                           layer_source=layer_source,
+                           zscore_source=zscore_source,
+                           feat_source=feat_source,
+                           valid_ra_source=valid_ra_source,
+                           valid_ca_source=valid_ca_source,
+                           loom_target=loom_target,
+                           layer_target=layer_target,
+                           feat_target=feat_target,
+                           valid_ra_target=valid_ra_target,
+                           valid_ca_target=valid_ca_target,
+                           layer_impute=layer_impute,
+                           correlation=correlation,
+                           neighbor_method=neighbor_method,
+                           pca_target=pca_target,
+                           remove_version=remove_version,
+                           n_trees=n_trees,
+                           batch_size=batch_size,
+                           seed=seed,
+                           tmp_dir=tmp_dir,
+                           verbose=verbose)
+    # Clean-up files
+    os.remove(zscore_source)
+
+
 def perform_imputation(loom_source,
                        loom_target,
                        method='knn',
@@ -2001,6 +2446,7 @@ def perform_imputation(loom_source,
                        feat_target='Accession',
                        cell_source='CellID',
                        cell_target='CellID',
+                       pca_target=None,
                        valid_ra_source=None,
                        valid_ra_target=None,
                        valid_ca_source=None,
@@ -2038,6 +2484,8 @@ def perform_imputation(loom_source,
             feat_target (str/list): Row attribute(s) specifying unique feature names in loom_target
             cell_source (str): Column attribute specifying unique cell IDs in loom_source
             cell_target (str/list): Column attribute specifying unique cell IDs in loom_target
+            pca_target (str/list/None): Attribute containing PCs in loom_target
+                Used if method is mnn_rescue
             valid_ra_source (str): Row attribute specifying valid features in loom_source
                 Should point to a boolean array
             valid_ra_target (str/list): Row attribute(s) specifying valid features in loom_target
@@ -2117,13 +2565,53 @@ def perform_imputation(loom_source,
                                     verbose=verbose)
     elif method == 'mnn_rescue':
         if low_mem:
-            raise ValueError('mnn_rescue will be added in version 0.4')
+            low_mem_mnn_1d(loom_source=loom_source,
+                           loom_target=loom_target,
+                           layer_source=layer_source,
+                           layer_target=layer_target,
+                           layer_impute=layer_impute,
+                           correlation=correlation,
+                           feat_source=feat_source,
+                           feat_target=feat_target,
+                           cell_target=cell_target,
+                           pca_target=pca_target,
+                           valid_ra_source=valid_ra_source,
+                           valid_ra_target=valid_ra_target,
+                           valid_ca_source=valid_ca_source,
+                           valid_ca_target=valid_ca_target,
+                           neighbor_method=method,
+                           n_trees=n_trees,
+                           remove_version=remove_version,
+                           tmp_dir=tmp_dir,
+                           batch_size=batch_size,
+                           seed=seed,
+                           verbose=verbose)
         else:
             # TO DO: ADD LOW MEMORY VERSION
             raise ValueError('mnn_rescue can only be performed if low_mem is true')
     elif method == 'mnn_direct':
         if low_mem:
-            raise ValueError('mnn_rescue will be added in version 0.4')
+            low_mem_mnn_1d(loom_source=loom_source,
+                           loom_target=loom_target,
+                           layer_source=layer_source,
+                           layer_target=layer_target,
+                           layer_impute=layer_impute,
+                           correlation=correlation,
+                           feat_source=feat_source,
+                           feat_target=feat_target,
+                           cell_target=cell_target,
+                           pca_target=pca_target,
+                           valid_ra_source=valid_ra_source,
+                           valid_ra_target=valid_ra_target,
+                           valid_ca_source=valid_ca_source,
+                           valid_ca_target=valid_ca_target,
+                           neighbor_method=method,
+                           n_trees=n_trees,
+                           remove_version=remove_version,
+                           tmp_dir=tmp_dir,
+                           batch_size=batch_size,
+                           seed=seed,
+                           verbose=verbose)
         else:
             # TO DO: ADD LOW MEMORY VERSION
             raise ValueError('mnn_direct can only be performed if low_mem is true')

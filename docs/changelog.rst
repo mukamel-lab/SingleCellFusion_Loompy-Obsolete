@@ -1,5 +1,8 @@
 Changelog
 ================
+* Version 0.4.0 - 2019-09-30:
+    * Added preliminary MNN functions
+    * Removed recipes and integration functions pending updates
 * Version 0.3.0 - 2019-09-25:
     * Major overhaul to make SingleCellFusion more user friendly
     * Added low and high memory versions of constrained kNN search

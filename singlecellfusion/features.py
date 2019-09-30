@@ -312,7 +312,7 @@ def prep_for_common(loom_file,
         loom_file (str): Path to loom file
         id_attr (str): Attribute specifying unique feature IDs
         remove_version (bool): Remove GENCODE gene versions from IDs
-        valid_ra (str): Optional, attribute that specifies desired features
+        valid_ra (str/None): Optional, attribute that specifies desired features
 
     Returns:
         features (ndarray): Array of unique feature IDs
