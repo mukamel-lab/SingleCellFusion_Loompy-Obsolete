@@ -1630,7 +1630,7 @@ def low_mem_constrained_knn(loom_target,
                                       as_bool=True,
                                       inverse=False)
     with loompy.connect(loom_source) as ds:
-        feat_select = ds.ra[feature_target]
+        feat_select = ds.ra[feature_source][row_source]
     if remove_version:
         feat_select = utils.remove_gene_version(feat_select)
     n_target = np.sum(col_target)
