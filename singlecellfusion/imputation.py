@@ -109,12 +109,6 @@ def temp_zscore_loom(loom_file,
                                    append=append_loom,
                                    empty_base=False,
                                    batch_size=batch_size)
-    # Add valid rows and columns
-    with loompy.connect(tmp_loom) as ds:
-        if valid_ca is not None:
-            ds.ca[valid_ca] = col_idx
-        if valid_ra is not None:
-            ds.ra[valid_ra] = row_idx
     # Log
     if verbose:
         t1 = time.time()
@@ -250,7 +244,7 @@ def build_knn(t,
     """
     if verbose:
         imp_log.info('Building kNN')
-    t.build(n_trees)
+    t.on_disk_build(n_trees)
     return t
 
 
