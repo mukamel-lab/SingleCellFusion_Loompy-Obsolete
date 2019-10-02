@@ -1624,7 +1624,7 @@ def low_mem_constrained_knn(loom_target,
         t.build(n_trees)
         # Query the kNN
         _, idx = low_mem_report_knn(loom_file=zscore_target,
-                                    layer=layer_target,
+                                    layer='',
                                     row_arr=row_target,
                                     col_arr=rejected_cells,
                                     feat_attr=feature_target,
