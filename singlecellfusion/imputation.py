@@ -119,51 +119,6 @@ def temp_zscore_loom(loom_file,
     return tmp_loom
 
 
-def add_mat_to_knn(mat,
-                   t,
-                   start_idx=0):
-    """
-    Adds a matrix to an Annoy kNN index
-
-    Args:
-        mat (ndarray): Array of values to add to kNN
-        t (Annoy object): Annoy index
-        start_idx (int): Start index for mat in t
-            Useful when adding in batches
-
-    Returns:
-        t (Annoy object): Annoy index
-        new_idx (int): Last index added to t
-    """
-    new_idx = start_idx
-    for i, val in enumerate(mat):
-        new_idx += i
-        t.add_item(new_idx, val)
-    return t, new_idx
-
-
-def prep_knn_object(num_dim,
-                    metric='euclidean',
-                    seed=None):
-    """
-    Generates an Annoy kNN index
-
-    Args:
-        num_dim: Number of dimensions for vectors in kNN
-        metric (str): Distance metric for kNN
-            angular, euclidean, manhattan, hamming, dot
-        seed (int): Seed for Annoy
-
-    Returns:
-        t (object): Annoy index for kNN
-    """
-    t = AnnoyIndex(num_dim,
-                   metric=metric)
-    if seed is not None:
-        t.set_seed(seed)
-    return t
-
-
 def get_knn_dist_and_idx(t,
                          mat_test,
                          k,
@@ -227,38 +182,18 @@ def get_knn_dist_and_idx(t,
         return knn_idx.astype(int)
 
 
-def build_knn(t,
-              n_trees=10,
-              verbose=False):
-    """
-    Builds a forest of tress for kNN
-
-    Args:
-        t (Annoy object): Annoy index for kNN
-        n_trees (int): Number of trees to use for kNN
-            More trees leads to higher precision
-        verbose (bool): Print logging messages
-
-    Returns:
-        t (Annoy object): Annoy index for kNN
-    """
-    if verbose:
-        imp_log.info('Building kNN')
-    t.on_disk_build(n_trees)
-    return t
-
-
-def train_knn(loom_file,
-              layer,
-              row_arr,
-              col_arr,
-              feat_attr,
-              feat_select,
-              reverse_rank,
-              remove_version,
-              seed,
-              batch_size,
-              verbose):
+def low_mem_train_knn(loom_file,
+                      layer,
+                      row_arr,
+                      col_arr,
+                      feat_attr,
+                      feat_select,
+                      reverse_rank,
+                      remove_version,
+                      tmp_dir,
+                      seed,
+                      batch_size,
+                      verbose):
     """
     Trains a kNN using loom data in batches
 
@@ -272,19 +207,28 @@ def train_knn(loom_file,
         reverse_rank (bool): Reverse the ranking of features in a cell
             Used if expected correlation is negative
         remove_version (bool): Remove GENCODE version ID
+        tmp_dir (str): Output directory for temporary files
+            If None, writes to system's default
         seed (int): Seed for annoy
         batch_size (int): Size of chunks for iterating over loom_file
         verbose (bool): Print logging messages
 
     Returns:
         t (object): Annoy kNN index
+        index_file (str): Path to file containing index
     """
     if verbose:
         imp_log.info('Training kNN')
     # Prepare kNN object
-    t = prep_knn_object(num_dim=feat_select.shape[0],
-                        metric='dot',
-                        seed=seed)
+    t = AnnoyIndex(feat_select.shape[0],
+                   metric='dot')
+    # Low memory so build on disk
+    with tempfile.NamedTemporaryFile(dir=tmp_dir, delete=False) as tmpfile:
+        index_file = tmpfile.name
+    t.on_disk_build(index_file)
+    # Set seed
+    if seed is not None:
+        t.set_seed(seed)
     current_idx = 0
     # Get layers
     layers = utils.make_layer_list(layer)
@@ -303,26 +247,27 @@ def train_knn(loom_file,
             if reverse_rank:
                 dat = -1 * dat
             # Add to kNN
-            t, current_idx = add_mat_to_knn(mat=dat,
-                                            t=t,
-                                            start_idx=current_idx)
+            for _, val in enumerate(dat):
+                current_idx += 1
+                t.add_item(current_idx, val)
             current_idx += 1  # Need to iterate by one to start at next element
     # Return kNN
-    return t
+    return t, index_file
 
 
-def report_knn(loom_file,
-               layer,
-               row_arr,
-               col_arr,
-               feat_attr,
-               feat_select,
-               reverse_rank,
-               k,
-               t,
-               batch_size,
-               remove_version,
-               verbose):
+def low_mem_report_knn(loom_file,
+                       layer,
+                       row_arr,
+                       col_arr,
+                       feat_attr,
+                       feat_select,
+                       reverse_rank,
+                       k,
+                       t,
+                       index_file,
+                       batch_size,
+                       remove_version,
+                       verbose):
     """
     Gets distance and indices from kNN
 
@@ -337,6 +282,7 @@ def report_knn(loom_file,
             Useful if expected correlation is negative
         k (int): Number of nearest neighbors
         t (object): Annoy index
+        index_file (str): Path to on disk index file for kNN
         batch_size (int): Size of chunks to iterate for loom file
         remove_version (bool): Remove GENCODE gene version ID
         verbose (bool): Print logging messages
@@ -377,6 +323,8 @@ def report_knn(loom_file,
                                                      verbose=verbose)
             dist[selection, :] = tmp_dist
             idx[selection, :] = tmp_idx
+    # Remove temporary file
+    os.remove(index_file)
     # Return values
     return dist, idx
 
@@ -619,13 +567,15 @@ def low_mem_distance_index(mat_train,
     if train_f != test_f:
         raise ValueError('mat_train and mat_test dimensions are not identical')
     # Build kNN
-    t = prep_knn_object(num_dim=train_f,
-                        metric=metric,
-                        seed=seed)
-    t, _x = add_mat_to_knn(mat=mat_train,
-                           t=t)
-    t = build_knn(t=t,
-                  n_trees=n_trees)
+    if verbose:
+        imp_log.info('Building kNN')
+    t = AnnoyIndex(train_f,
+                   metric=metric)
+    if seed is not None:
+        t.set_seed(seed)
+    for i, row in enumerate(mat_train):
+        t.add_item(i, row)
+    t.build(n_trees)
     # Get distances and indices
     knn_res = get_knn_dist_and_idx(t=t,
                                    mat_test=mat_test,
@@ -1656,35 +1606,37 @@ def low_mem_constrained_knn(loom_target,
             imp_log.info('{0:.2f}% of target cells still need to make connections'.format(pct_rem))
             imp_log.info('{0:.2f}% of source cells can make connections'.format(pct_sat))
         # Train the kNN
-        t = train_knn(loom_file=zscore_source,
-                      layer='',
-                      row_arr=row_source,
-                      col_arr=unsaturated_cells,
-                      feat_attr=feature_source,
-                      feat_select=feat_select,
-                      reverse_rank=False,
-                      remove_version=remove_version,
-                      seed=seed,
-                      batch_size=batch_size,
-                      verbose=verbose)
+        t, index_file = low_mem_train_knn(loom_file=zscore_source,
+                                          layer='',
+                                          row_arr=row_source,
+                                          col_arr=unsaturated_cells,
+                                          feat_attr=feature_source,
+                                          feat_select=feat_select,
+                                          reverse_rank=False,
+                                          remove_version=remove_version,
+                                          tmp_dir=tmp_dir,
+                                          seed=seed,
+                                          batch_size=batch_size,
+                                          verbose=verbose)
         # Build the kNN
-        t = build_knn(t=t,
-                      n_trees=n_trees,
-                      verbose=verbose)
+        if verbose:
+            imp_log.info('Building kNN')
+        t.build(n_trees)
         # Query the kNN
-        _, idx = report_knn(loom_file=zscore_target,
-                            layer=layer_target,
-                            row_arr=row_target,
-                            col_arr=rejected_cells,
-                            feat_attr=feature_target,
-                            feat_select=feat_select,
-                            reverse_rank=reverse_rank,
-                            k=min(n_neighbors * speed_factor,
-                                  unsaturated_cells.shape[0]),
-                            t=t,
-                            batch_size=batch_size,
-                            remove_version=remove_version,
-                            verbose=verbose)
+        _, idx = low_mem_report_knn(loom_file=zscore_target,
+                                    layer=layer_target,
+                                    row_arr=row_target,
+                                    col_arr=rejected_cells,
+                                    feat_attr=feature_target,
+                                    feat_select=feat_select,
+                                    reverse_rank=reverse_rank,
+                                    k=min(n_neighbors * speed_factor,
+                                          unsaturated_cells.shape[0]),
+                                    t=t,
+                                    index_file=index_file,
+                                    batch_size=batch_size,
+                                    remove_version=remove_version,
+                                    verbose=verbose)
         # Reindex values
         idx = unsaturated_cells[idx.astype(int)]
         rejected_local_idx = []
@@ -2063,60 +2015,62 @@ def low_mem_get_mnn(loom_target,
                                      tmp_dir=tmp_dir,
                                      verbose=verbose)
     # Train kNN
-    t_s2t = train_knn(loom_file=zscore_target,
-                      layer='',
-                      row_arr=row_target,
-                      col_arr=col_target,
-                      feat_attr=feature_id_target,
-                      feat_select=target_feat,
-                      reverse_rank=reverse_rank,
-                      remove_version=remove_version,
-                      seed=seed,
-                      batch_size=batch_size,
-                      verbose=verbose)
-    t_t2s = train_knn(loom_file=zscore_source,
-                      layer='',
-                      row_arr=row_source,
-                      col_arr=col_source,
-                      feat_attr=feature_id_source,
-                      feat_select=source_feat,
-                      reverse_rank=False,
-                      remove_version=remove_version,
-                      seed=seed,
-                      batch_size=batch_size,
-                      verbose=verbose)
+    t_s2t, s_idx = low_mem_train_knn(loom_file=zscore_target,
+                                     layer='',
+                                     row_arr=row_target,
+                                     col_arr=col_target,
+                                     feat_attr=feature_id_target,
+                                     feat_select=target_feat,
+                                     reverse_rank=reverse_rank,
+                                     remove_version=remove_version,
+                                     tmp_dir=tmp_dir,
+                                     seed=seed,
+                                     batch_size=batch_size,
+                                     verbose=verbose)
+    t_t2s, t_idx = low_mem_train_knn(loom_file=zscore_source,
+                                     layer='',
+                                     row_arr=row_source,
+                                     col_arr=col_source,
+                                     feat_attr=feature_id_source,
+                                     feat_select=source_feat,
+                                     reverse_rank=False,
+                                     remove_version=remove_version,
+                                     tmp_dir=tmp_dir,
+                                     seed=seed,
+                                     batch_size=batch_size,
+                                     verbose=verbose)
     # Build trees
-    t_t2s = build_knn(t=t_t2s,
-                      n_trees=n_trees,
-                      verbose=verbose)
-    t_s2t = build_knn(t=t_s2t,
-                      n_trees=n_trees,
-                      verbose=verbose)
+    if verbose:
+        imp_log.info('Building kNN')
+    t_t2s.build(n_trees)
+    t_s2t.build(n_trees)
     # Get distances and indices
-    dist_target, idx_target = report_knn(loom_file=zscore_target,
-                                         layer='',
-                                         row_arr=row_target,
-                                         col_arr=col_target,
-                                         feat_attr=feature_id_target,
-                                         feat_select=target_feat,
-                                         reverse_rank=False,
-                                         k=max_k_target,
-                                         t=t_t2s,
-                                         batch_size=batch_size,
-                                         remove_version=remove_version,
-                                         verbose=verbose)
-    dist_source, idx_source = report_knn(loom_file=zscore_source,
-                                         layer='',
-                                         row_arr=row_source,
-                                         col_arr=col_source,
-                                         feat_attr=feature_id_source,
-                                         feat_select=source_feat,
-                                         reverse_rank=reverse_rank,
-                                         k=max_k_source,
-                                         t=t_s2t,
-                                         batch_size=batch_size,
-                                         remove_version=remove_version,
-                                         verbose=verbose)
+    dist_target, idx_target = low_mem_report_knn(loom_file=zscore_target,
+                                                 layer='',
+                                                 row_arr=row_target,
+                                                 col_arr=col_target,
+                                                 feat_attr=feature_id_target,
+                                                 feat_select=target_feat,
+                                                 reverse_rank=False,
+                                                 k=max_k_target,
+                                                 t=t_t2s,
+                                                 index_file=t_idx,
+                                                 batch_size=batch_size,
+                                                 remove_version=remove_version,
+                                                 verbose=verbose)
+    dist_source, idx_source = low_mem_report_knn(loom_file=zscore_source,
+                                                 layer='',
+                                                 row_arr=row_source,
+                                                 col_arr=col_source,
+                                                 feat_attr=feature_id_source,
+                                                 feat_select=source_feat,
+                                                 reverse_rank=reverse_rank,
+                                                 k=max_k_source,
+                                                 t=t_s2t,
+                                                 index_file=s_idx,
+                                                 batch_size=batch_size,
+                                                 remove_version=remove_version,
+                                                 verbose=verbose)
     # Get correct indices (import if restricted to valid cells)
     correct_idx_target = np.reshape(lookup_source.loc[np.ravel(idx_target).astype(int)].values,
                                     idx_target.shape)
