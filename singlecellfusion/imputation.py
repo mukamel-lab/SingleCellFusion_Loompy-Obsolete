@@ -1337,7 +1337,7 @@ def low_mem_knn_impute(loom_source,
                         neighbor_index_target='imputed_knn',  # hack for now, will be overwritten each time
                         neighbor_index_source=None,
                         k_src_tar=None,
-                        k_tar_src=None,
+                        k_tar_src=n_neighbors,
                         k_rescue=None,
                         ka=None,
                         epsilon=None,
