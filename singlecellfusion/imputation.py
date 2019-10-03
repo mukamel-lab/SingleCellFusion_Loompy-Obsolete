@@ -1662,7 +1662,6 @@ def low_mem_constrained_knn(loom_target,
     with loompy.connect(loom_target) as ds:
         accepted_idx = accepted_idx.reindex(np.arange(ds.shape[1]))
         accepted_idx = accepted_idx.fillna(value=0)
-    with loompy.connect(filename=loom_source) as ds:
         ds.ca[knn_index] = accepted_idx.values.astype(int)
     os.remove(zscore_target)
     if verbose:
