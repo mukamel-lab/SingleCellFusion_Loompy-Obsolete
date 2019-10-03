@@ -248,9 +248,8 @@ def low_mem_train_knn(loom_file,
                 dat = -1 * dat
             # Add to kNN
             for _, val in enumerate(dat):
-                current_idx += 1
                 t.add_item(current_idx, val)
-            current_idx += 1  # Need to iterate by one to start at next element
+                current_idx += 1
     # Return kNN
     return t, index_file
 
