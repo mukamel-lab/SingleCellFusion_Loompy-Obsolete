@@ -7,7 +7,9 @@ Written by Wayne Doyle
 """
 import loompy
 import numpy as np
+import pandas as pd
 from sklearn.decomposition import IncrementalPCA
+import fbpca
 import logging
 import time
 from . import utils
@@ -184,3 +186,55 @@ def batch_pca(loom_file,
             time_run, time_fmt = utils.format_run_time(t1, t2)
             decomp_log.info(
                 'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
+
+
+def high_mem_pca(loom_file,
+                 layer='',
+                 n_pca=50,
+                 cell_attr='CellID',
+                 valid_ca=None,
+                 valid_ra=None,
+                 verbose=False):
+    """
+    Gets a data frame of PCs for a given set of data from a loom file
+
+    Args:
+        loom_file (str): Path to loom file
+        layer (str): Layer in loom_file containing data
+        n_pca (int): Number of PCs to obtain
+        cell_attr (str): Column attribute containing unique cell IDs
+        valid_ca (str/None): Column attribute specifying cells to include
+        valid_ra (str/None): Row attribute specifying features to include
+        verbose (bool): If true, print logging messages
+    """
+    if verbose:
+        decomp_log.info('Running PCA on {}'.format(loom_file))
+        t0 = time.time()
+    # Get indices
+    row_idx = utils.get_attr_index(loom_file=loom_file,
+                                   attr=valid_ra,
+                                   as_bool=False,
+                                   inverse=False)
+    col_idx = utils.get_attr_index(loom_file=loom_file,
+                                   attr=valid_ca,
+                                   as_bool=False,
+                                   inverse=False)
+    # Get data
+    with loompy.connect(loom_file) as ds:
+        dat = ds.layers[layer].sparse(row_idx, col_idx).todense().T
+        cell_ids = ds.ca[cell_attr][col_idx]
+    # Perform PCA
+    u, s, v = fbpca.pca(dat, n_pca)
+    pcs = u.dot(np.diag(s))
+    sigma = np.sqrt(np.sum(s * s) / (pcs.shape[0] * pcs.shape[1]))
+    pcs = pcs / sigma
+    # Make into dataframe
+    pcs = pd.DataFrame(pcs,
+                       index=cell_ids,
+                       columns=np.arange(n_pca))
+    if verbose:
+        t1 = time.time()
+        time_run, time_fmt = utils.format_run_time(t0, t1)
+        decomp_log.info(
+            'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
+    return pcs

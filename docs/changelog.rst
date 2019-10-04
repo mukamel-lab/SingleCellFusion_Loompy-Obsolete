@@ -1,5 +1,9 @@
 Changelog
 ================
+* Version 0.5.0 - 2019-10-03:
+    * Fixed low and high memory versions of kNN
+    * Added integration function (currently only in high memory format)
+    * Added high memory PCA
 * Version 0.4.0 - 2019-09-30:
     * Added preliminary MNN functions
     * Removed recipes and integration functions pending updates
