@@ -1,5 +1,8 @@
 Changelog
 ================
+* Version 0.6 - 2019-10-04:
+    * Added functions to search for common, variable features
+    * Added ability to perform high and low memory mean/standard deviation of loom files
 * Version 0.5.0 - 2019-10-03:
     * Fixed low and high memory versions of kNN
     * Added integration function (currently only in high memory format)

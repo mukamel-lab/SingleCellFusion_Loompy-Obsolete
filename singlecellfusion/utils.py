@@ -10,6 +10,7 @@ import loompy
 import os
 import re
 from scipy import sparse
+from sklearn.utils import sparsefuncs
 import time
 import logging
 
@@ -354,13 +355,63 @@ def make_layer_list(layers):
     return out
 
 
-def batch_mean_and_std(loom_file,
-                       layer,
-                       axis=None,
-                       valid_ca=None,
-                       valid_ra=None,
-                       batch_size=512,
-                       verbose=False):
+def high_mem_mean_and_std(loom_file,
+                          layer,
+                          axis=None,
+                          valid_ca=None,
+                          valid_ra=None):
+    """
+    Calculates mean and standard deviation in a high memory fashion
+
+    Args:
+        loom_file (str): Path to loom file containing mC/C counts
+        layer (str): Layer containing mC/C counts
+        axis (int): Axis to calculate mean and standard deviation
+            None: values are for entire layer
+            0: Statistics are for cells
+            1: Statistics are for features
+        valid_ca (str): Optional, only use cells specified by valid_ca
+        valid_ra (str): Optional, only use features specified by valid_ra
+    """
+    # Get valid indices
+    row_idx = get_attr_index(loom_file=loom_file,
+                             attr=valid_ra,
+                             columns=False,
+                             as_bool=False,
+                             inverse=False)
+    col_idx = get_attr_index(loom_file=loom_file,
+                             attr=valid_ca,
+                             columns=True,
+                             as_bool=False,
+                             inverse=False)
+    # Get data
+    with loompy.connect(loom_file, mode='r') as ds:
+        dat = ds.layers[layer].sparse(row_idx, col_idx)
+    # Get mean and variance
+    if axis == 0:
+        my_mean, my_var = sparsefuncs.mean_variance_axis(dat.tocsc(), axis=0)
+        my_std = np.sqrt(my_var)
+    elif axis == 1:
+        my_mean, my_var = sparsefuncs.mean_variance_axis(dat.tocsr(), axis=1)
+        my_std = np.sqrt(my_var)
+    elif axis is None:
+        my_mean = dat.tocsr().mean(axis=None)
+        sqrd = dat.copy()
+        sqrd.data **= 2
+        my_var = sqrd.sum(axis=None) / (sqrd.shape[0] * sqrd.shape[1]) - my_mean ** 2
+        my_std = np.sqrt(my_var)
+    else:
+        raise ValueError('Unsupported axis value ({})'.format(axis))
+    return my_mean, my_std
+
+
+def low_mem_mean_and_std(loom_file,
+                         layer,
+                         axis=None,
+                         valid_ca=None,
+                         valid_ra=None,
+                         batch_size=512,
+                         verbose=False):
     """
     Batch calculates mean and standard deviation
 
