@@ -476,6 +476,8 @@ def get_kruskal_common(loom_files,
                                       'pval': ds.ra['kruskal_pval'],
                                       'pct': ds.ra['kruskal_max_cluster_pct']},
                                      index=ds.ra[feat_attrs[i]])
+            if remove_version:
+                result_df.index = utils.remove_gene_version(result_df.index.values)
             result_df = result_df.iloc[valid_idx, :]
             result_df = result_df.sort_values(by='H', ascending=False).head(n=n_markers)
             marker_list.append(result_df.index.values)
