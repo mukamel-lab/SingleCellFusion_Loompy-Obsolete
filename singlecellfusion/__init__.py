@@ -18,5 +18,6 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger(__name__)
 
 # Import packages
-from .features import find_common_features
+from .features import find_common_variable
 from .imputation import perform_imputation
+from .integration import integrate_data
