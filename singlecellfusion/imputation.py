@@ -1602,7 +1602,7 @@ def low_mem_constrained_knn(loom_target,
         if verbose:
             pct_rem = 100 - rejected_cells.shape[0] / n_target * 100
             pct_sat = unsaturated_cells.shape[0] / n_source * 100
-            imp_log.info('{0:.2f}% of target cells still need to make connections'.format(pct_rem))
+            imp_log.info('{0:.2f}% of target cells have made connections'.format(pct_rem))
             imp_log.info('{0:.2f}% of source cells can make connections'.format(pct_sat))
         # Train the kNN
         t, index_file = low_mem_train_knn(loom_file=zscore_source,
