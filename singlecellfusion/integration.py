@@ -42,10 +42,12 @@ def high_mem_get_data(loom_file,
     # Get indices
     row_idx = utils.get_attr_index(loom_file=loom_file,
                                    attr=valid_ra,
+                                   columns=False,
                                    as_bool=False,
                                    inverse=False)
     col_idx = utils.get_attr_index(loom_file=loom_file,
                                    attr=valid_ca,
+                                   columns=True,
                                    as_bool=False,
                                    inverse=False)
     # Get data
@@ -77,6 +79,7 @@ def high_mem_repeat_label(loom_file,
     """
     col_idx = utils.get_attr_index(loom_file=loom_file,
                                    attr=valid_ca,
+                                   columns=True,
                                    as_bool=False,
                                    inverse=False)
     labels = np.repeat(label, col_idx.shape[0])
