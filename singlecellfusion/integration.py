@@ -63,6 +63,77 @@ def high_mem_get_data(loom_file,
     return dat
 
 
+def low_mem_add_data(in_loom,
+                     out_loom,
+                     layer,
+                     feat_attr,
+                     cell_attr,
+                     label=None,
+                     valid_ra=None,
+                     valid_ca=None,
+                     remove_version=False,
+                     batch_size=5000,
+                     gen_out=False,
+                     verbose=False):
+    """
+    Gets relevant counts and type information for a given loom file
+
+    Args:
+        in_loom (str): Path to loom file containing imputed counts
+        out_loom (str): Path to output loom file
+        layer (str): Layer in loom_file containing counts
+        feat_attr (str): Row attribute containing unique feature IDs
+        cell_attr (str): Column attribute containing unique cell IDs
+        label (str): Label to add for in_loom
+            Added as column attribute Modality
+        valid_ra (str/None): Row attribute specifying rows to include
+        valid_ca (str/None): Column attribute specifying columns to include
+        remove_version (bool): If True, remove GENCODE version ID
+        batch_size (int): Number of cells to load per batch
+        gen_out (bool): If true, generate out_loom
+        verbose (bool): If true, print logging messages
+    """
+    if verbose:
+        int_log.info('Adding counts from layer {0} in {1}'.format(layer, in_loom))
+    # Handle inputs
+    row_idx = utils.get_attr_index(loom_file=in_loom,
+                                   attr=valid_ra,
+                                   columns=False,
+                                   as_bool=False,
+                                   inverse=False)
+    col_idx = utils.get_attr_index(loom_file=in_loom,
+                                   attr=valid_ca,
+                                   columns=True,
+                                   as_bool=False,
+                                   inverse=False)
+    layers = utils.make_layer_list(layer)
+    append = True
+    if gen_out:
+        append = False
+    # Get data
+    with loompy.connect(in_loom) as ds:
+        feat_ids = ds.ra[feat_attr][row_idx]
+        if remove_version:
+            feat_ids = utils.remove_gene_version(feat_ids)
+        for (_, selection, view) in ds.scan(axis=1,
+                                            items=col_idx,
+                                            layers=layers,
+                                            batch_size=batch_size):
+            dat = view.layers[layer].sparse(row_idx, col_idx)
+            col_attrs = {'CellID': view.ca[cell_attr],
+                         'OriginalFile': np.repeat(in_loom, view.shape[1])}
+            if label is not None:
+                col_attrs['Modality'] = np.repeat(label, view.shape[1])
+            utils.batch_add_sparse(loom_file=out_loom,
+                                   layers={'': dat},
+                                   row_attrs={'Accession': feat_ids},
+                                   col_attrs=col_attrs,
+                                   append=append,
+                                   empty_base=False,
+                                   batch_size=batch_size)
+            append = True
+
+
 def high_mem_repeat_label(loom_file,
                           valid_ca,
                           label):
@@ -231,6 +302,126 @@ def high_mem_integrate(loom_source,
         int_log.info('Integrated loom file is saved to {}'.format(loom_output))
 
 
+def low_mem_integrate(loom_source,
+                      loom_target,
+                      loom_output,
+                      layer_source='',
+                      layer_target='',
+                      feat_source='Accession',
+                      feat_target='Accession',
+                      cell_source='CellID',
+                      cell_target='CellID',
+                      label_source=None,
+                      label_target=None,
+                      valid_ra_source=None,
+                      valid_ra_target=None,
+                      valid_ca_source=None,
+                      valid_ca_target=None,
+                      remove_version=False,
+                      batch_size=5000,
+                      verbose=False):
+    """
+    Generates an integrated loom file containing observed and imputed counts for a single modality
+        Is slow but uses low memory
+
+    Args:
+        loom_source (str): Path to source loom file (modality that loom_target is imputed into)
+        loom_target (str/list): Path(s) to target files (modality/modalities that receive imputed counts)
+        loom_output (str): Path to output loom file that contains observed/imputed counts for a given modality
+        layer_source (str): Layer in loom_source containing observed counts
+        layer_target (str/list): Layer(s) in loom_target containing imputed counts
+        feat_source (str): Row attribute containing unique feature IDs in loom_source
+            IDs will be included in loom_output under the row attribute Accession
+        feat_target (str/list): Row attribute(s) containing unique feature IDs in loom_target
+        cell_source (str): Column attribute containing unique cell IDs in loom_source
+            IDs will be included in loom_output under the column attribute CellID
+        cell_target (str/list): Column attribute(s) containing unique cell IDs in loom_target
+        label_source (str/None): Optional, labels to be added to cells from loom_source
+            Will be saved in the column attribute Modality
+            If provided, label_target must also be provided
+        label_target (str/list/None): Optional, labels to be added to cells from loom_target
+        valid_ra_source (str/None): Optional, row attribute specifying features to include in loom_source
+        valid_ra_target (str/list/None): Optional, row attribute specifying features to include in loom_target
+        valid_ca_source (str/None): Optional, column attribute specifying cells to include in loom_source
+        valid_ca_target (str/list/None): Optional, column attribute specifying cells to include in loom_target
+        remove_version (bool): If true, remove GENCODE version ID
+        batch_size (int): Number of cells to load per batch
+        verbose (bool): If true, print logging messages
+    """
+    # Check inputs
+    is_a_list = False
+    if isinstance(loom_target, list):
+        utils.all_same_type_size(parameters=[loom_target,
+                                             layer_target],
+                                 expected_type='list',
+                                 confirm_size=True)
+        check_parameters = [feat_target,
+                            cell_target,
+                            valid_ra_target,
+                            valid_ca_target,
+                            remove_version,
+                            label_target]
+        checked = utils.mimic_list(parameters=check_parameters,
+                                   list_len=len(loom_target))
+        feat_target = checked[0]
+        cell_target = checked[1]
+        valid_ra_target = checked[2]
+        valid_ca_target = checked[3]
+        remove_version = checked[4]
+        label_target = checked[5]
+        is_a_list = True
+    elif isinstance(loom_target, str):
+        utils.all_same_type_size(parameters=[loom_target,
+                                             layer_target,
+                                             cell_target,
+                                             feat_target],
+                                 expected_type='str',
+                                 confirm_size=False)
+    #  Get data from source
+    low_mem_add_data(in_loom=loom_source,
+                     out_loom=loom_output,
+                     layer=layer_source,
+                     feat_attr=feat_source,
+                     cell_attr=cell_source,
+                     label=label_source,
+                     valid_ra=valid_ra_source,
+                     valid_ca=valid_ca_source,
+                     remove_version=remove_version,
+                     batch_size=batch_size,
+                     gen_out=True,
+                     verbose=verbose)
+    # Get data from target(s)
+    if is_a_list:
+        for i in np.arange(len(loom_target)):
+            low_mem_add_data(in_loom=loom_target[i],
+                             out_loom=loom_output,
+                             layer=layer_target[i],
+                             feat_attr=feat_target[i],
+                             cell_attr=cell_target[i],
+                             label=label_target[i],
+                             valid_ra=valid_ra_target[i],
+                             valid_ca=valid_ca_target[i],
+                             remove_version=remove_version[i],
+                             batch_size=batch_size,
+                             gen_out=False,
+                             verbose=verbose)
+    else:
+        low_mem_add_data(in_loom=loom_target,
+                         out_loom=loom_output,
+                         layer=layer_target,
+                         feat_attr=feat_target,
+                         cell_attr=cell_target,
+                         label=label_target,
+                         valid_ra=valid_ra_target,
+                         valid_ca=valid_ca_target,
+                         remove_version=remove_version,
+                         batch_size=batch_size,
+                         gen_out=False,
+                         verbose=verbose)
+    if verbose:
+        int_log.info('Integrated loom file is saved to {}'.format(loom_output))
+
+
 def integrate_data(loom_source,
                    loom_target,
                    loom_output,
@@ -280,7 +471,24 @@ def integrate_data(loom_source,
         verbose (bool): If true, print logging messages
     """
     if low_mem:
-        raise ValueError('Currently not supported')
+        low_mem_integrate(loom_source=loom_source,
+                          loom_target=loom_target,
+                          loom_output=loom_output,
+                          layer_source=layer_source,
+                          layer_target=layer_target,
+                          feat_source=feat_source,
+                          feat_target=feat_target,
+                          cell_source=cell_source,
+                          cell_target=cell_target,
+                          label_source=label_source,
+                          label_target=label_target,
+                          valid_ra_source=valid_ra_source,
+                          valid_ra_target=valid_ra_target,
+                          valid_ca_source=valid_ca_source,
+                          valid_ca_target=valid_ca_target,
+                          remove_version=remove_version,
+                          batch_size=batch_size,
+                          verbose=verbose)
     else:
         high_mem_integrate(loom_source=loom_source,
                            loom_target=loom_target,
