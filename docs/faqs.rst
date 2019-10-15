@@ -22,8 +22,8 @@ can be generated with the following code::
                   row_attrs={'Accession:df.index.values},
                   col_attrs={'CellID:df.columns.values})
 
-Why is my code using so much memory?
-------------------------------------
+Why is my code using so much memory, even with the low_mem flag?
+-----------------------------------------------------------------
 Access of loom files is performed in batches to reduce the memory overload. In the basic recipe for
 SingleCellFusion (pairwise_impute) the size of these batches is controlled by the parameter batch_x and
 batch_y. If you are having memory issues, try reducing the size of these values to reduce your memory
@@ -58,8 +58,8 @@ from 1 to your desired integer.
 This information came from this `StackOverflow question
 <https://stackoverflow.com/questions/30791550/limit-number-of-threads-in-numpy>`_.
 
-Why is my code running slow?
-----------------------------
+Why is my code running slow with the low_mem flag?
+--------------------------------------------------
 Although the loom file format has a number of benefits, the access and processing of data in the file
 will get progressively slower as more data is added to the file. If you are finding that your code is
 running too slow it can be helpful to make a second loom file containing just the relevant data for running

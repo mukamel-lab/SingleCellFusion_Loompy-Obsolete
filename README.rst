@@ -46,9 +46,6 @@ Basic Usage
 -----------
 This will be uploaded soon!
 
-Please note that for now, the only working method is the constrained kNN method.
-The MNN method will be added in version 0.5.
-
 Tutorials and FAQs
 -------------------
 Our `FAQs <docs/faqs.rst>`_ have some basic information on running SingleCellFusion.
