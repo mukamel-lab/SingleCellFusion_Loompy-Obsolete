@@ -643,10 +643,10 @@ def find_common_variable(loom_files,
         cluster_attrs = checked[5]
     elif isinstance(loom_files, str):
         raise ValueError('More than one loom file has to be provided')
-    if verbose:
-        feat_log.info('Finding variable features')
     # Find variable genes
     for i in np.arange(len(loom_files)):
+        if verbose:
+            feat_log.info('Finding variable features for {}'.format(loom_files[i]))
         if method == 'vmr' or method == 'sd':
             if low_mem:
                 low_mem_decile(loom_file=loom_files[i],
