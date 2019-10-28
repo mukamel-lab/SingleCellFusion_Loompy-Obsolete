@@ -10,6 +10,7 @@ import loompy
 import os
 import re
 from scipy import sparse
+from scipy import stats
 from sklearn.utils import sparsefuncs
 import time
 import logging
@@ -655,3 +656,51 @@ def batch_add_sparse(loom_file,
                           row_attrs=row_attrs,
                           col_attrs=batch_col)
             append = True
+
+
+def kruskal(*args):
+    """
+    Adapted version of Kruskal-Wallis function from Scipy
+    Original Scipy function is copyrighted by Gary Strangman and The Scipy Developers
+
+    Args:
+        sample1, sample2, ... (array-like): Two or more arrays with the sample measurements can be given as arguments.
+
+    Returns:
+        statistic (float): The Kruskal-Wallis H statistic, corrected for ties
+        pvalue (float): The p-value for the test using the assumption that H has a chi square distribution
+    """
+    # Check inputs
+    args = list(map(np.asarray, args))
+    num_groups = len(args)
+    if num_groups < 2:
+        raise ValueError("Need at least two groups")
+    for arg in args:
+        if arg.size == 0:
+            return [np.nan, np.nan]
+    n = np.asarray(list(map(len, args)))
+    # Process data
+    alldata = np.concatenate(args)
+    ranked = stats.rankdata(alldata)
+    ties = stats.tiecorrect(ranked)
+    if ties == 0:
+        return [np.nan, np.nan]
+    else:
+        # Compute sum^2/n for each group and sum
+        j = np.insert(np.cumsum(n), 0, 0)
+        ssbn = 0
+        for i in range(num_groups):
+            a = np.ravel(ranked[j[i]:j[i + 1]])
+            s = np.sum(a, 0)
+            if not np.isscalar(s):
+                s = s.astype(float) * s
+            else:
+                s = float(s) * s
+            ssbn += s / n[i]
+        # Get totals
+        totaln = np.sum(n)
+        h = 12.0 / (totaln * (totaln + 1)) * ssbn - 3 * (totaln + 1)
+        df = num_groups - 1
+        h /= ties
+        chi_result = stats.distributions.chi2.sf(h, df)
+        return [h, chi_result]

@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import time
 import logging
-from scipy.stats import kruskal
 import warnings
 import functools
 from . import utils
@@ -93,11 +92,7 @@ def low_mem_kruskal(loom_file,
                     gene_list.append(np.ravel(gene_dat.todense()))
                     pct_list.append(gene_dat.data.shape[0] / gene_dat.shape[1])
                 # Perform kruskal-wallis test
-                try:  # for situations in which all numbers are identical
-                    hval, pval = kruskal(*gene_list)
-                except RuntimeWarning:
-                    hval = np.nan
-                    pval = np.nan
+                hval, pval = utils.kruskal(*gene_list)
                 result_dict[curr_gene] = [hval, pval, np.max(pct_list)]
         # Make data frame of results
         result_df = pd.DataFrame.from_dict(result_dict,
@@ -187,11 +182,7 @@ def high_mem_kruskal(loom_file,
                 gene_list.append(np.ravel(gene_dat.todense()))
                 pct_list.append(gene_dat.data.shape[0] / gene_dat.shape[1])
             # Perform kruskal-wallis test
-            try:  # for situations in which all numbers are identical
-                hval, pval = kruskal(*gene_list)
-            except RuntimeWarning:
-                hval = np.nan
-                pval = np.nan
+            hval, pval = utils.kruskal(*gene_list)
             result_dict[curr_gene] = [hval, pval, np.max(pct_list)]
         # Make data frame of results
         result_df = pd.DataFrame.from_dict(result_dict,
