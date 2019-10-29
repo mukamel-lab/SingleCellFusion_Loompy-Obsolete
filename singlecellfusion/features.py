@@ -171,7 +171,6 @@ def high_mem_kruskal(loom_file,
                                           cols=col_idx)
         # Loop over all genes
         for i in np.arange(tmp_dat.shape[0]):
-            feat_log.info('On iteration {}'.format(i))
             gene_list = list()
             pct_list = list()
             curr_gene = gene_lookup.index.values[i]
