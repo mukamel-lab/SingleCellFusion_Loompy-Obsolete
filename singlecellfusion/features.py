@@ -484,7 +484,7 @@ def get_kruskal_common(loom_files,
         feat_ids = prep_for_common(loom_file=loom_files[i],
                                    id_attr=feat_attrs[i],
                                    remove_version=remove_version,
-                                   valid_ra=valid_ras[i])
+                                   valid_ra=None)
         with loompy.connect(filename=loom_files[i]) as ds:
             logical_idx = pd.Series(data=np.zeros((ds.shape[0],),
                                                   dtype=int),
@@ -550,7 +550,7 @@ def get_decile_common(loom_files,
         feat_ids = prep_for_common(loom_file=loom_files[i],
                                    id_attr=feat_attrs[i],
                                    remove_version=remove_version,
-                                   valid_ra=valid_ras[i])
+                                   valid_ra=None)
         with loompy.connect(filename=loom_files[i]) as ds:
             logical_idx = pd.Series(data=np.zeros((ds.shape[0],),
                                                   dtype=int),
