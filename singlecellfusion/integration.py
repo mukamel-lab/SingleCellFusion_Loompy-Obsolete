@@ -119,7 +119,7 @@ def low_mem_add_data(in_loom,
                                             items=col_idx,
                                             layers=layers,
                                             batch_size=batch_size):
-            dat = view.layers[layer].sparse(row_idx, col_idx)
+            dat = view.layers[layer].sparse(row_idx, np.arange(view.shape[1]))
             col_attrs = {'CellID': view.ca[cell_attr],
                          'OriginalFile': np.repeat(in_loom, view.shape[1])}
             if label is not None:
