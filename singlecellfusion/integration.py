@@ -215,7 +215,6 @@ def high_mem_integrate(loom_source,
                             cell_target,
                             valid_ra_target,
                             valid_ca_target,
-                            remove_version,
                             label_target]
         checked = utils.mimic_list(parameters=check_parameters,
                                    list_len=len(loom_target))
@@ -223,8 +222,7 @@ def high_mem_integrate(loom_source,
         cell_target = checked[1]
         valid_ra_target = checked[2]
         valid_ca_target = checked[3]
-        remove_version = checked[4]
-        label_target = checked[5]
+        label_target = checked[4]
         is_a_list = True
     elif isinstance(loom_target, str):
         utils.all_same_type_size(parameters=[loom_target,
@@ -258,7 +256,7 @@ def high_mem_integrate(loom_source,
                                                  cell_attr=cell_target[i],
                                                  valid_ra=valid_ra_target[i],
                                                  valid_ca=valid_ca_target[i],
-                                                 remove_version=remove_version[i],
+                                                 remove_version=remove_version,
                                                  verbose=verbose))
             if is_type:
                 type_dat.append(high_mem_repeat_label(loom_file=loom_target[i],
@@ -359,7 +357,6 @@ def low_mem_integrate(loom_source,
                             cell_target,
                             valid_ra_target,
                             valid_ca_target,
-                            remove_version,
                             label_target]
         checked = utils.mimic_list(parameters=check_parameters,
                                    list_len=len(loom_target))
@@ -367,8 +364,7 @@ def low_mem_integrate(loom_source,
         cell_target = checked[1]
         valid_ra_target = checked[2]
         valid_ca_target = checked[3]
-        remove_version = checked[4]
-        label_target = checked[5]
+        label_target = checked[4]
         is_a_list = True
     elif isinstance(loom_target, str):
         utils.all_same_type_size(parameters=[loom_target,
@@ -401,7 +397,7 @@ def low_mem_integrate(loom_source,
                              label=label_target[i],
                              valid_ra=valid_ra_target[i],
                              valid_ca=valid_ca_target[i],
-                             remove_version=remove_version[i],
+                             remove_version=remove_version,
                              batch_size=batch_size,
                              gen_out=False,
                              verbose=verbose)
