@@ -169,7 +169,6 @@ def high_mem_kruskal(loom_file,
                            columns=cell_lookup.index.values)
     # Loop over all genes
     for curr_gene in tmp_dat.index.values:
-        feat_log.info('DEBUG: On {}'.format(curr_gene))
         gene_list = list()
         rel_dat = tmp_dat.loc[curr_gene, :].copy()
         # Loop over all clusters
