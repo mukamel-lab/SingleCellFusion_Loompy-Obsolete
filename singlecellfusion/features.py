@@ -154,13 +154,6 @@ def high_mem_kruskal(loom_file,
                                    index=ds.ca[cell_attr])
         cell_lookup = cell_lookup.iloc[col_idx, :]
         unq_clusters = np.unique(cluster_lookup['clusters'])
-        # Get cluster indices (so it does not have to be called in every loop)
-        cluster_idx = dict()
-        for cluster in unq_clusters:
-            tmp_idx = cluster_lookup['clusters'] == cluster
-            rel_cells = cluster_lookup.index.values[tmp_idx]
-            rel_idx = cell_lookup.loc[rel_cells, 'indices'].values
-            cluster_idx[cluster] = rel_idx
         # Get data
         tmp_dat = ds.layers[layer].sparse(rows=row_idx,
                                           cols=col_idx)
@@ -173,8 +166,8 @@ def high_mem_kruskal(loom_file,
         rel_dat = tmp_dat.loc[curr_gene, :].copy()
         # Loop over all clusters
         for cluster in unq_clusters:
-            rel_idx = cluster_idx[cluster]
-            gene_dat = rel_dat.iloc[rel_idx].copy().values
+            rel_idx = cluster_lookup.loc[cluster_lookup['clusters'] == cluster].index.values
+            gene_dat = rel_dat.loc[rel_idx].copy().values
             gene_list.append(gene_dat)
         # Perform kruskal-wallis test
         hval, pval = utils.kruskal(*gene_list)
