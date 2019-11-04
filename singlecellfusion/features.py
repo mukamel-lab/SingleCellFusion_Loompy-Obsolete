@@ -165,7 +165,7 @@ def high_mem_kruskal(loom_file,
         tmp_dat = ds.layers[layer].sparse(rows=row_idx,
                                           cols=col_idx)
     tmp_dat = pd.DataFrame(tmp_dat.todense(),
-                           index=gene_lookup.index.values,
+                           index=gene_lookup.index.values[row_idx],
                            columns=cell_lookup.index.values)
     # Loop over all genes
     for curr_gene in tmp_dat.index.values:
