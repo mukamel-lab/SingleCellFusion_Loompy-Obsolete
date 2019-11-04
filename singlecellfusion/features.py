@@ -82,7 +82,6 @@ def low_mem_kruskal(loom_file,
             # Loop over all genes
             for i in np.arange(view.shape[0]):
                 gene_list = list()
-                pct_list = list()
                 curr_gene = view.ra[feat_attr][i]
                 rel_dat = tmp_dat.tocsr()[i, :].copy()
                 # Loop over all clusters
@@ -90,15 +89,13 @@ def low_mem_kruskal(loom_file,
                     rel_idx = cluster_idx[cluster]
                     gene_dat = rel_dat.tocsc()[:, rel_idx]
                     gene_list.append(np.ravel(gene_dat.todense()))
-                    pct_list.append(gene_dat.data.shape[0] / gene_dat.shape[1])
                 # Perform kruskal-wallis test
                 hval, pval = utils.kruskal(*gene_list)
-                result_dict[curr_gene] = [hval, pval, np.max(pct_list)]
+                result_dict[curr_gene] = [hval, pval]
         # Make data frame of results
         result_df = pd.DataFrame.from_dict(result_dict,
                                            orient='index',
-                                           columns=['H', 'pval',
-                                                    'max_cluster_pct'])
+                                           columns=['H', 'pval'])
         # Make merged dataframe
         merged = pd.merge(gene_lookup,
                           result_df,
@@ -107,12 +104,10 @@ def low_mem_kruskal(loom_file,
                           how='left')
         merged['H'] = merged['H'].fillna(value=0)
         merged['pval'] = merged['pval'].fillna(value=1)
-        merged['max_cluster_pct'] = merged['max_cluster_pct'].fillna(0)
         merged['cluster_attr'] = cluster_attr
         # Add data to file
         ds.ra['kruskal_H'] = merged['H'].values
         ds.ra['kruskal_pval'] = merged['pval'].values
-        ds.ra['kruskal_max_cluster_pct'] = merged['max_cluster_pct'].values
         ds.ra['kruskal_cluster_attr'] = merged['cluster_attr'].values
 
 
@@ -176,22 +171,19 @@ def high_mem_kruskal(loom_file,
     for curr_gene in tmp_dat.index.values:
         feat_log.info('DEBUG: On {}'.format(curr_gene))
         gene_list = list()
-        pct_list = list()
         rel_dat = tmp_dat.loc[curr_gene, :].copy()
         # Loop over all clusters
         for cluster in unq_clusters:
             rel_idx = cluster_idx[cluster]
             gene_dat = rel_dat.iloc[rel_idx].copy().values
             gene_list.append(gene_dat)
-            pct_list.append(gene_dat.data.shape[0] / gene_dat.shape[1])
         # Perform kruskal-wallis test
         hval, pval = utils.kruskal(*gene_list)
-        result_dict[curr_gene] = [hval, pval, np.max(pct_list)]
+        result_dict[curr_gene] = [hval, pval]
     # Make data frame of results
     result_df = pd.DataFrame.from_dict(result_dict,
                                        orient='index',
-                                       columns=['H', 'pval',
-                                                'max_cluster_pct'])
+                                       columns=['H', 'pval'])
     # Make merged dataframe
     merged = pd.merge(gene_lookup,
                       result_df,
@@ -200,13 +192,11 @@ def high_mem_kruskal(loom_file,
                       how='left')
     merged['H'] = merged['H'].fillna(value=0)
     merged['pval'] = merged['pval'].fillna(value=1)
-    merged['max_cluster_pct'] = merged['max_cluster_pct'].fillna(0)
     merged['cluster_attr'] = cluster_attr
     # Add data to file
     with loompy.connect(loom_file) as ds:
         ds.ra['kruskal_H'] = merged['H'].values
         ds.ra['kruskal_pval'] = merged['pval'].values
-        ds.ra['kruskal_max_cluster_pct'] = merged['max_cluster_pct'].values
         ds.ra['kruskal_cluster_attr'] = merged['cluster_attr'].values
 
 
