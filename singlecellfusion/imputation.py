@@ -2265,7 +2265,7 @@ def low_mem_mnn_1d(loom_source,
         feat_target (str/list): Row attribute(s) specifying unique feature names in loom_target
         cell_target (str/list): Column attribute specifying unique cell IDs in loom_target
         pca_target (str/list/None): Column attribute containing PCs in loom_target
-            Used if neighbor_method == mnn_rescue
+            Used if neighbor_method is mnn_rescue
         valid_ra_source (str): Row attribute specifying valid features in loom_source
             Should point to a boolean array
         valid_ra_target (str/list): Row attribute(s) specifying valid features in loom_target

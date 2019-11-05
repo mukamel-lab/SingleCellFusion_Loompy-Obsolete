@@ -1,8 +1,11 @@
 Changelog
 ================
-* Version 0.7 - 2019-10-14:
+* Version 0.8.0 - 2019-11-05:
+    * Performed debugging steps
+    * Added wrapper for all steps
+* Version 0.7.0 - 2019-10-14:
     * Added low memory version of integration functions
-* Version 0.6 - 2019-10-04:
+* Version 0.6.0 - 2019-10-04:
     * Added functions to search for common, variable features
     * Added ability to perform high and low memory mean/standard deviation of loom files
 * Version 0.5.0 - 2019-10-03:
