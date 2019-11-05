@@ -19,7 +19,7 @@ wrap_log = logging.getLogger(__name__)
 def fuse_data(loom_source,
               loom_target,
               correlation,
-              loom_output='integrated',
+              loom_output='integrated.loom',
               layer_source='',
               layer_target='',
               layer_impute='imputed',
