@@ -7,6 +7,7 @@ __all__ = ['decomposition',
            'imputation',
            'integration',
            'recipes',
+           'wrappers',
            'utils'
            ]
 # Set-up logger
@@ -21,3 +22,4 @@ logger = logging.getLogger(__name__)
 from .features import find_common_variable
 from .imputation import perform_imputation
 from .integration import integrate_data
+from .wrappers import fuse_data
