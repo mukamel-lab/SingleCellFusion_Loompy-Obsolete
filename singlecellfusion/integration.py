@@ -125,14 +125,13 @@ def low_mem_add_data(in_loom,
         if remove_version:
             feat_ids = utils.remove_gene_version(feat_ids)
         # Re-order if appending
-        if append:
-            feat_idx = pd.DataFrame({'old_idx': np.arange(feat_ids.shape[0])},
-                                    index=feat_ids)
-            feat_idx = feat_idx.loc[out_ids]
-            feat_idx['new_idx'] = np.arange(feat_idx.shape[0])
-            feat_idx = pd.Series(feat_idx['new_idx'].values,
-                                 index=feat_idx['old_idx'].values)
-            feat_idx = feat_idx.to_dict()
+        feat_idx = pd.DataFrame({'old_idx': np.arange(feat_ids.shape[0])},
+                                index=feat_ids)
+        feat_idx = feat_idx.loc[out_ids]
+        feat_idx['new_idx'] = np.arange(feat_idx.shape[0])
+        feat_idx = pd.Series(feat_idx['new_idx'].values,
+                             index=feat_idx['old_idx'].values)
+        feat_idx = feat_idx.to_dict()
         # Loop over file
         for (_, selection, view) in ds.scan(axis=1,
                                             items=col_idx,
