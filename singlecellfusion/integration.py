@@ -9,6 +9,7 @@ Below code was written/developed by Fangming Xie, Ethan Armand, and Wayne Doyle
 import loompy
 import pandas as pd
 import numpy as np
+from scipy import sparse
 import logging
 from . import utils
 
@@ -110,23 +111,51 @@ def low_mem_add_data(in_loom,
     append = True
     if gen_out:
         append = False
+    else:
+        with loompy.connect(out_loom, mode='r') as ds:
+            out_ids = ds.ra['Accession']
+            if remove_version:
+                out_ids = utils.remove_gene_version(out_ids)
     # Get data
     with loompy.connect(in_loom) as ds:
+        # Get feature information
         feat_ids = ds.ra[feat_attr][row_idx]
         if remove_version:
             feat_ids = utils.remove_gene_version(feat_ids)
+        # Re-order if appending
+        if append:
+            feat_idx = pd.DataFrame({'old_idx': np.arange(feat_ids.shape[0])},
+                                    index=feat_ids)
+            feat_idx = feat_idx.loc[out_ids]
+            feat_idx['new_idx'] = np.arange(feat_idx.shape[0])
+            feat_idx = pd.Series(feat_idx['new_idx'].values,
+                                 index=feat_idx['old_idx'].values)
+            feat_idx = feat_idx.to_dict()
+        # Loop over file
         for (_, selection, view) in ds.scan(axis=1,
                                             items=col_idx,
                                             layers=layers,
                                             batch_size=batch_size):
             dat = view.layers[layer].sparse(row_idx, np.arange(view.shape[1]))
+            # Update order if appending to match previous data
+            if append:
+                orig_idx = pd.Series(dat.nonzero()[0])
+                new_idx = orig_idx.replace(to_replace=feat_idx)
+                dat = sparse.coo_matrix((dat.data,
+                                         (new_idx.values, dat.nonzero()[1])),
+                                        (dat.shape[0], dat.shape[1]))
+                add_ids = out_ids.copy()
+            else:
+                add_ids = feat_ids.copy()
+            # Get column information
             col_attrs = {'CellID': view.ca[cell_attr],
                          'OriginalFile': np.repeat(in_loom, view.shape[1])}
             if label is not None:
                 col_attrs['Modality'] = np.repeat(label, view.shape[1])
+            # Add to loom file
             utils.batch_add_sparse(loom_file=out_loom,
                                    layers={'': dat},
-                                   row_attrs={'Accession': feat_ids},
+                                   row_attrs={'Accession': add_ids},
                                    col_attrs=col_attrs,
                                    append=append,
                                    empty_base=False,
