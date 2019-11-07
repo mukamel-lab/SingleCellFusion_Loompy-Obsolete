@@ -111,11 +111,13 @@ def low_mem_add_data(in_loom,
     append = True
     if gen_out:
         append = False
+        with loompy.connect(in_loom, mode='r') as ds:
+            out_ids = ds.ra['Accession']
     else:
         with loompy.connect(out_loom, mode='r') as ds:
             out_ids = ds.ra['Accession']
-            if remove_version:
-                out_ids = utils.remove_gene_version(out_ids)
+    if remove_version:
+        out_ids = utils.remove_gene_version(out_ids)
     # Get data
     with loompy.connect(in_loom) as ds:
         # Get feature information
