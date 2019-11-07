@@ -112,7 +112,7 @@ def low_mem_add_data(in_loom,
     if gen_out:
         append = False
         with loompy.connect(in_loom, mode='r') as ds:
-            out_ids = ds.ra['Accession']
+            out_ids = ds.ra['Accession'][row_idx]
     else:
         with loompy.connect(out_loom, mode='r') as ds:
             out_ids = ds.ra['Accession']
