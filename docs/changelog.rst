@@ -1,7 +1,10 @@
 Changelog
 ================
+* Version 0.9.0 - 2019-11-07:
+    * Finalizing tests before first stable release
+    * Fixed indexing issue in low memory version of data integration
 * Version 0.8.0 - 2019-11-05:
-    * Performed debugging steps
+    * Performed debugging
     * Added wrapper for all steps
 * Version 0.7.0 - 2019-10-14:
     * Added low memory version of integration functions
