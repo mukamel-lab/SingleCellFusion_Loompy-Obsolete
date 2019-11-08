@@ -1,20 +1,33 @@
 """
 Functions used to imputing data across modalities
 
-The idea of using MNNs and a Gaussian kernel to impute across modalities is
-based on ideas from the Marioni, Krishnaswamy, and Pe'er groups. The relevant
-citations are:
+The idea of using MNNs and a Gaussian kernel to impute across modalities is based on ideas from the Marioni,
+Krishnaswamy, and Pe'er groups. The relevant citations are:
 
-'Batch effects in single-cell RNA sequencing data are corrected by matching
-mutual nearest neighbors' by Laleh Haghverdi, Aaron TL Lun, Michael D Morgan,
-and John C Marioni. Published in Nature Biotechnology. DOI:
+'Batch effects in single-cell RNA sequencing data are corrected by matching mutual nearest neighbors.'
+Authored by: Laleh Haghverdi, Aaron TL Lun, Michael D Morgan, and John C Marioni.
+Published in Nature Biotechnology. DOI:
 https://doi.org/10.1038/nbt.4091.
 
-'MAGIC: A diffusion-based imputation method reveals gene-gene interactions in
-single-cell RNA-sequencing data.' The publication was authored by: David van
-Dijk, Juozas Nainys, Roshan Sharma, Pooja Kathail, Ambrose J Carr, Kevin R Moon,
-Linas Mazutis, Guy Wolf, Smita Krishnaswamy, Dana Pe'er. Published in Cell.
+'MAGIC: A diffusion-based imputation method reveals gene-gene interactions insingle-cell RNA-sequencing data.'
+Authored by: David van Dijk, Juozas Nainys, Roshan Sharma, Pooja Kathail, Ambrose J Carr, Kevin R Moon, Linas Mazutis,
+Guy Wolf, Smita Krishnaswamy, Dana Pe'er.
+Published in Cell.
 DOI: https://doi.org/10.1101/111591.
+
+During development two other publications that share a similar approach were developed and have helped to inform our
+approach to this problem:
+
+'Single-Cell Multi-omic Integration Compares and Contrasts Features of Brain Cell Identity.'
+Authored by: Joshua D. Welch, Velina Kozareva, Ashley Ferreira, Charles Vanderburg, Carly Martin,and Evan Z. Macosko.
+Published in Cell.
+DOI: https://doi.org/10.1016/j.cell.2019.05.006.
+
+'Comprehensive Integration of Single-Cell Data'
+Authored by: Tim Stuart, Andrew Butler, Paul Hoffman, Christoph Hafemeister, Efthymia Papalexi, William M. Mauck III,
+Yuhan Hao, Marlon Stoeckius, Peter Smibert, and Rahul Satija.
+Published in Cell.
+DOI: https://doi.org/10.1016/j.cell.2019.05.031.
 
 Below code was written/developed by Fangming Xie, Ethan Armand, and Wayne Doyle
 
@@ -48,8 +61,7 @@ def temp_zscore_loom(loom_file,
                      verbose=False):
     if verbose:
         t0 = time.time()
-        imp_log.info(
-            'Generating temporary z-scored file for {}'.format(loom_file))
+        imp_log.info('Generating temporary z-scored file for {}'.format(loom_file))
     # Prep
     col_idx = utils.get_attr_index(loom_file=loom_file,
                                    attr=valid_ca,
@@ -73,7 +85,7 @@ def temp_zscore_loom(loom_file,
                                             items=col_idx,
                                             layers=layers,
                                             batch_size=batch_size):
-            # Get zscore
+            # Get z-score
             dat = pd.DataFrame(view.layers[raw_layer][row_idx, :].T)
             dat = pd.DataFrame(dat).rank(pct=True, axis=1)
             dat = dat.apply(zscore, axis=1, result_type='expand').values.T
@@ -113,9 +125,7 @@ def temp_zscore_loom(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = utils.format_run_time(t0, t1)
-        imp_log.info(
-            'Made temporary loom file in {0:.2f} {1}'.format(time_run,
-                                                             time_fmt))
+        imp_log.info('Made temporary loom file in {0:.2f} {1}'.format(time_run,time_fmt))
     return tmp_loom
 
 
@@ -130,7 +140,7 @@ def get_knn_dist_and_idx(t,
 
     Args:
         t (Annoy object): Index for an Annoy kNN
-        mat_test (ndarray): Matrix of values to test against kNN
+        mat_test (array): Matrix of values to test against kNN
             Used to find neighbors
         k (int): Nearest number of neighbors
         search_k (int): Number of nodes to search
@@ -140,8 +150,8 @@ def get_knn_dist_and_idx(t,
         verbose (bool): Print logging messages
 
     Returns
-        knn_dist (ndarray): Optional, distances for k nearest neighbors
-        knn_idx (ndarray): Indices for k nearest neighbors
+        knn_dist (array): Optional, distances for k nearest neighbors
+        knn_idx (array): Indices for k nearest neighbors
     """
     # Check data
     train_obs = t.get_n_items()
@@ -200,10 +210,10 @@ def low_mem_train_knn(loom_file,
     Args:
         loom_file (str): Path to loom file
         layer (str): Layer containing data to add to kNN
-        row_arr (ndarray): Boolean vector of rows to include from loom_file
-        col_arr (ndarray): Boolean vector of columns to include from loom_file
+        row_arr (array): Boolean vector of rows to include from loom_file
+        col_arr (array): Boolean vector of columns to include from loom_file
         feat_attr (str): Row attribute in loom_file specifying feature IDs
-        feat_select (ndarray): Vector of features to include for kNN
+        feat_select (array): Vector of features to include for kNN
         reverse_rank (bool): Reverse the ranking of features in a cell
             Used if expected correlation is negative
         remove_version (bool): Remove GENCODE version ID
@@ -273,10 +283,10 @@ def low_mem_report_knn(loom_file,
     Args:
         loom_file (str): Path to loom file
         layer (str): Layer with counts for kNN
-        row_arr (ndarray): Boolean vector of rows to include in loom_file
-        col_arr (ndarray): Boolean vector of columns to include in loom_file
+        row_arr (array): Boolean vector of rows to include in loom_file
+        col_arr (array): Boolean vector of columns to include in loom_file
         feat_attr (str): Row attribute specifying feature IDs in loom_file
-        feat_select (ndarray): Vector of features to include from loom_file
+        feat_select (array): Vector of features to include from loom_file
         reverse_rank (bool): Reverse rank ordering of features per cell
             Useful if expected correlation is negative
         k (int): Number of nearest neighbors
@@ -287,8 +297,8 @@ def low_mem_report_knn(loom_file,
         verbose (bool): Print logging messages
 
     Returns:
-        dist (ndarray): Array of distances for kNN
-        idx (ndarray): Array of indices for kNN
+        dist (array): Array of distances for kNN
+        idx (array): Array of indices for kNN
     """
     if verbose:
         imp_log.info('Querying kNN')
@@ -373,8 +383,8 @@ def gen_impute_adj(loom_file,
         loom_file (str): Path to loom file
         neighbor_attr (str): Attribute specifying neighbors
         k (int): k value for mutual nearest neighbors
-        self_idx (ndarray): Rows in corr to include
-        other_idx (ndarray) Columns in corr to include
+        self_idx (array): Rows in corr to include
+        other_idx (array) Columns in corr to include
 
     Returns
         adj (sparse matrix): Adjacency matrix with k nearest
@@ -543,8 +553,8 @@ def low_mem_distance_index(mat_train,
         finding neighbors in lower dimensional space
 
     Args:
-        mat_train (ndarray): Matrix to train the kNN on
-        mat_test (ndarray): Matrix to test the kNN on
+        mat_train (array): Matrix to train the kNN on
+        mat_test (array): Matrix to test the kNN on
         k (int): Number of nearest neighbors
         metric (str): Distance metric for kNN
             angular, euclidean, manhattan, hamming, dot
@@ -558,7 +568,7 @@ def low_mem_distance_index(mat_train,
         verbose (bool): Print logging messages
 
     Returns:
-        knn_res (tuple/ndarray): kNN indices and (include_distances) distances
+        knn_res (tuple/array): kNN indices and (if include_distances) distances
     """
     # Get dimensions
     train_f = mat_train.shape[1]
@@ -2003,7 +2013,7 @@ def low_mem_get_mnn(loom_target,
         reverse_rank = False
     else:
         raise ValueError('Unsupported correlation value ({})'.format(correlation))
-    # Make temporary files holding zscores
+    # Make temporary files holding z-scores
     zscore_target = temp_zscore_loom(loom_file=loom_target,
                                      raw_layer=layer_target,
                                      feat_attr=feature_id_target,
@@ -2086,8 +2096,7 @@ def low_mem_get_mnn(loom_target,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = utils.format_run_time(t0, t1)
-        imp_log.info(
-            'Found neighbors in {0:.2f} {1}'.format(time_run, time_fmt))
+        imp_log.info('Found neighbors in {0:.2f} {1}'.format(time_run, time_fmt))
 
 
 def low_mem_mnn_impute(loom_source,
@@ -2533,7 +2542,7 @@ def perform_imputation(loom_source,
                            seed=seed,
                            verbose=verbose)
         else:
-            # TO DO: ADD LOW MEMORY VERSION
+            # TO DO: ADD HIGH MEMORY VERSION
             raise ValueError('mnn_rescue can only be performed if low_mem is true')
     elif method == 'mnn_direct':
         if low_mem:
@@ -2559,7 +2568,7 @@ def perform_imputation(loom_source,
                            seed=seed,
                            verbose=verbose)
         else:
-            # TO DO: ADD LOW MEMORY VERSION
+            # TO DO: ADD HIGH MEMORY VERSION
             raise ValueError('mnn_direct can only be performed if low_mem is true')
     else:
         raise ValueError('method must be knn, mnn_direct, or mnn_rescue not {}'.format(method))

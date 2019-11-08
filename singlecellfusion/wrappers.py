@@ -132,6 +132,12 @@ def fuse_data(loom_source,
         seed (int): Seed for randomization
         verbose (bool): Print logging messages
     """
+    # Check low_mem flags for unsupported options so user does not run code that they do not need to
+    if not low_mem:
+        if neighbor_method == 'mnn_rescue':
+            raise ValueError('mnn_rescue can only be performed if low_mem is true')
+        elif neighbor_method == 'mnn_direct':
+            raise ValueError('mnn_direct can only be performed if low_mem is true')
     # Check inputs
     is_a_list = False
     if isinstance(loom_target, list):

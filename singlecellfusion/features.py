@@ -1,6 +1,5 @@
 """
 Helper functions for manipulating features
-The typical user will NOT need to use these functions
 
 Written by Wayne Doyle
 
@@ -169,7 +168,7 @@ def high_mem_kruskal(loom_file,
             rel_idx = cluster_lookup.loc[cluster_lookup['clusters'] == cluster].index.values
             gene_dat = rel_dat.loc[rel_idx].copy().values
             gene_list.append(gene_dat)
-        # Perform kruskal-wallis test
+        # Perform Kruskal-Wallis test
         hval, pval = utils.kruskal(*gene_list)
         result_dict[curr_gene] = [hval, pval]
     # Make data frame of results
@@ -277,10 +276,9 @@ def low_mem_decile(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = utils.format_run_time(t0, t1)
-        feat_log.info(
-            'Found {0} variable features in {1:.2f} {2}'.format(hvf.shape[0],
-                                                                time_run,
-                                                                time_fmt))
+        feat_log.info('Found {0} variable features in {1:.2f} {2}'.format(hvf.shape[0],
+                                                                          time_run,
+                                                                          time_fmt))
 
 
 def high_mem_decile(loom_file,
@@ -383,7 +381,7 @@ def prep_for_common(loom_file,
         valid_ra (str/None): Optional, attribute that specifies desired features
 
     Returns:
-        features (ndarray): Array of unique feature IDs
+        features (array): Array of unique feature IDs
     """
     valid_idx = utils.get_attr_index(loom_file=loom_file,
                                      attr=valid_ra,

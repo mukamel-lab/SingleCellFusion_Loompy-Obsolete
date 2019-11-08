@@ -1,5 +1,9 @@
 Changelog
 ================
+* Version 1.0.0 - 2019-11-08:
+    * First stable release!
+    * Basic example on how to use SingleCellFusion was added to the README
+    * Minor formatting and documenting fixes throughout
 * Version 0.9.0 - 2019-11-07:
     * Finalizing tests before first stable release
     * Fixed indexing issue in low memory version of data integration

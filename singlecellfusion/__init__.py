@@ -6,7 +6,6 @@ __all__ = ['decomposition',
            'features',
            'imputation',
            'integration',
-           'recipes',
            'wrappers',
            'utils'
            ]

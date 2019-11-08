@@ -1,5 +1,5 @@
 """
-Utility functions that can be run either as sub-routines or independently
+Utility functions that can be run either as subroutines or independently
 
 Written by Wayne Doyle unless otherwise noted
 
@@ -41,8 +41,7 @@ def round_unit(x,
         y (int): x to the nearest unit
 
     Based off of Parker's answer on StackOverflow:
-    https://stackoverflow.com/questions/26454649/...
-    python-round-up-to-the-nearest-ten
+    https://stackoverflow.com/questions/26454649/python-round-up-to-the-nearest-ten
     """
     if method == 'ceil':
         y = int(np.ceil(x / units)) * units
@@ -71,8 +70,7 @@ def alphanum_key(item):
         item (str): Value to sort
 
     Based on Mark Byer's post on StackOverflow:
-    https://stackoverflow.com/questions/...
-    4836710/does-python-have-a-built-in-function-for-string-natural-sort
+    https://stackoverflow.com/questions/4836710/does-python-have-a-built-in-function-for-string-natural-sort
 
     """
     keys = []
@@ -94,8 +92,7 @@ def nat_sort(items):
         items (list): List of items
 
     Based on Mark Byer's post on StackOverflow:
-    https://stackoverflow.com/questions/...
-    4836710/does-python-have-a-built-in-function-for-string-natural-sort
+    https://stackoverflow.com/questions/4836710/does-python-have-a-built-in-function-for-string-natural-sort
     """
     return sorted(items, key=alphanum_key)
 
@@ -249,7 +246,7 @@ def make_nan_array(num_rows, num_cols):
         num_cols (int): Number of columns for output array
 
     Returns:
-        nan_array (ndarray): Array of NaN values
+        nan_array (array): Array of NaN values
     """
     nan_array = np.empty((num_rows, num_cols))
     nan_array.fill(np.nan)
@@ -323,8 +320,10 @@ def get_attr_index(loom_file,
         idx = np.logical_not(idx)
     if as_bool:
         pass
-    else:  # ASSUMPTION: 1D array input
+    elif idx.ndim == 1:
         idx = np.where(idx)[0]
+    else:
+        raise ValueError('idx must be one dimensional')
     return idx
 
 

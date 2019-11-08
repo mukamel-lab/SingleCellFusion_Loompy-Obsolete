@@ -235,6 +235,5 @@ def high_mem_pca(loom_file,
     if verbose:
         t1 = time.time()
         time_run, time_fmt = utils.format_run_time(t0, t1)
-        decomp_log.info(
-            'Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
+        decomp_log.info('Reduced dimensions in {0:.2f} {1}'.format(time_run, time_fmt))
     return pcs
