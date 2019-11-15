@@ -93,7 +93,7 @@ equation:
   :alt: equation 3 of rescue
 
 This is a more lenient method for generating imputed counts as all cells will receive imputed
-data. This method will enable all cells to be analyzed, and is our recommended approach.
+data. This method will enable all cells to be analyzed.
 
 k-nearest neighbors
 -------------------
