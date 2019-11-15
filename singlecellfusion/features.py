@@ -448,8 +448,7 @@ def get_kruskal_common(loom_files,
                                          inverse=False)
         with loompy.connect(loom_files[i]) as ds:
             result_df = pd.DataFrame({'H': ds.ra['kruskal_H'],
-                                      'pval': ds.ra['kruskal_pval'],
-                                      'pct': ds.ra['kruskal_max_cluster_pct']},
+                                      'pval': ds.ra['kruskal_pval']},
                                      index=ds.ra[feat_attrs[i]])
             if remove_version:
                 result_df.index = utils.remove_gene_version(result_df.index.values)
@@ -586,8 +585,6 @@ def find_common_variable(loom_files,
             If method is kruskal the following row attributes will automatically be added
                  kruskal_H: H statistic from Kruskal-Wallis test
                  kruskal_pval: p-value from Kruskal-Wallis test
-                 kruskal_max_cluster_pct: Percentage of cells with non-zero counts in clusters
-                    Percent is from the cluster that has the largest number of non-zero counts
                  kruskal_cluster_attr: Cluster attribute used for performing Kruskal-Wallis test
         valid_ras (str/list/None): Row attribute specifying valid features to include
         valid_cas (str/list/None): Column attribute specifying valid cells to include
