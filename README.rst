@@ -80,12 +80,9 @@ fuse_data can be run with the following commands in a Python script::
               verbose=True) #Print logging messages
 
 
-These are the basic options that we have found to work well for integration, anything that is listed as optional. A more detailed walkthrough on how
-to use SingleCellFusion is being developed and will explain fuse_data and the component functions in more detail.
-
 Tutorials and FAQs
 -------------------
-* A basic tutorial showing how to use SingleCellFusion is under development.
+* An `example walkthrough <docs/snmc2t_example.rst>`_ of SingleCellFusion using data from this `bioRxiv preprint <https://doi.org/10.1101/434845>`_.
 * For a brief description of how SingleCellFusion works please check out this `link <docs/scf_description.rst>`_.
 * Our `FAQs <docs/faqs.rst>`_ have some answers to common questions that come up while using SingleCellFusion.
 * If you need information on performing preliminary analyses on loom files, please check out SingleCellFusion's sister repository `MoP <https://github.com/mukamel-lab/mop/>`_.
