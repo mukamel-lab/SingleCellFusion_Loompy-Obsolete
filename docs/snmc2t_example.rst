@@ -1,7 +1,7 @@
 Integration of snmC2T-seq and snATAC-seq data
 ==============================================
 
-This guide is for those just starting out with SingleCellFusion, and demonstrates a multi-omic integration of
+This guide is for those just starting out with SingleCellFusion_Loompy, and demonstrates a multi-omic integration of
 single nucleus methylome and chromatin accessibility data. The source of these data are described in
 this `bioRxiv preprint <https://doi.org/10.1101/434845>`_.
 
@@ -19,7 +19,7 @@ For this analysis we have used our own modified implementation of the
 `MAGIC algorithm for smoothing <https://doi.org/10.1016/j.cell.2018.05.061>`_. Our implementation is almost
 identical to MAGIC, with the major exception being that we have an additional parameter to specify the relative
 contribution of a cell's own counts to the smoothing. Our implementation can be found in `MoP <https://github.com/mukamel-lab/mop/>`_,
-SingleCellFusion's sister repository of functions used to analyze Loom files::
+SingleCellFusion_Loompy's sister repository of functions used to analyze Loom files::
 
     import mop
     # Smooth methylome
@@ -71,11 +71,11 @@ SingleCellFusion's sister repository of functions used to analyze Loom files::
                              batch_size=5000,
                              verbose=True)
 
-Running SingleCellFusion
+Running SingleCellFusion_Loompy
 -------------------------
 For the purpose of this tutorial we will will generate imputed methylome counts for the snATAC-seq
 data, and then we will project the two datasets into a common methylome space. The easiest way to use
-SingleCellFusion is to use the one step fuse_data function::
+SingleCellFusion_Loompy is to use the one step fuse_data function::
 
     import loompy
     import singlecellfusion as scf
@@ -153,9 +153,9 @@ dimensional embedding.
   :alt: Integrated embedding
 
 
-What are the different parameters for SingleCellFusion?
+What are the different parameters for SingleCellFusion_Loompy?
 --------------------------------------------------------
-SingleCellFusion works by generating imputed counts for each sequencing modality, in this example we are generating
+SingleCellFusion_Loompy works by generating imputed counts for each sequencing modality, in this example we are generating
 imputed methylome counts for the snATAC-seq data. Information for the source of the imputed counts
 (i.e. what imputed counts will be generated for) are specified by the "_source" parameters. Information for the
 targets of imputation (i.e. files that will receive imputed counts) are specified by the "_target" parameters.
@@ -168,8 +168,8 @@ targets of imputation (i.e. files that will receive imputed counts) are specifie
 * feat_source and feat_target are the row attributes specifying unique feature identifiers. These will be used to match features across datasets
 * cell_source and cell_target are column attributes specifying unique cellular identifiers
 * cluster_source and cluster_target are column attributes specifying unique cluster identifiers. These are used to identify variable features for integration.
-* valid_ra_source and valid_ra_target are row attributes that contain either a 0 or 1 for each feature. An integer value of 1 indicates that that feature passed quality control and can be used by SingleCellFusion. This is useful if your Loom file contains all observed data.
-* valid_ca_source and valid_ca_target are column attributes that contain either a 0 or 1 for each feature. An integer value of 1 indicates that that cell passed quality control and can be used by SingleCellFusion. This is useful if your Loom file contains all observed data.
+* valid_ra_source and valid_ra_target are row attributes that contain either a 0 or 1 for each feature. An integer value of 1 indicates that that feature passed quality control and can be used by SingleCellFusion_Loompy. This is useful if your Loom file contains all observed data.
+* valid_ca_source and valid_ca_target are column attributes that contain either a 0 or 1 for each feature. An integer value of 1 indicates that that cell passed quality control and can be used by SingleCellFusion_Loompy. This is useful if your Loom file contains all observed data.
 * label_source and label_target are modality specific labels that will be added to loom_output. These will be added to a column attribute called 'Modality' and can be useful for plotting.
 * var_method is the method for determining variable features for integration. Similar to `LIGER <https://www.cell.com/cell/pdf/S0092-8674(19)30504-5.pdf>`_, we have found that the Kruskal-Wallis test is an effective method for finding features to use.
 * common_attr is a string specifying the output name of the row attribute that indicates shared, variable features across loom files. This attribute will be added to loom_target and loom_source.
@@ -177,11 +177,11 @@ targets of imputation (i.e. files that will receive imputed counts) are specifie
 * kruskal_n is an integer specifying the number of variable features to intersect from each modality. For example, if set to 8000 the 8000 features with the highest H statistic from the Kruskal-Wallis tests will be selected per Loom file. The common_attr variable will then specify the intersection of these 8000 genes across all Loom files.
 * neighbor_method is a string specifying the method for finding nearest neighbors across modalities. We strongly recommend setting this to 'knn' which will perform a constrained knn search.
 * n_neighbors is an integer specifying the number of neighbors that each loom_target cell must make in the loom_source file.
-* relaxation is an integer that increases the number of neighbors that each loom_source file can make. This is the z parameter in the technical description of `SingleCellFusion <scf_description.rst>`_.
+* relaxation is an integer that increases the number of neighbors that each loom_source file can make. This is the z parameter in the technical description of `SingleCellFusion_Loompy <scf_description.rst>`_.
 * speed_factor is an integer. A higher speed factor means neighbors will be found more quickly, but at the expense of more memory.
 * n_trees is an integer that specifies the number of trees to use for an approximate k-nearest neighbors search by `Annoy <https://github.com/spotify/annoy>`_.
 * remove_version is a boolean. If true, it will remove any value after a period in the feat_source and feat_target row attributes. This is only useful if some files have GENCODE version IDs and others do not.
-* low_mem is a boolean specifying if SingleCellFusion should be run in a low memory or high memory fashion. If true, SingleCellFusion will be slow but can handle very large datasets. If false, SingleCellFusion will be fast but memory constrained.
+* low_mem is a boolean specifying if SingleCellFusion_Loompy should be run in a low memory or high memory fashion. If true, SingleCellFusion_Loompy will be slow but can handle very large datasets. If false, SingleCellFusion_Loompy will be fast but memory constrained.
 * batch_size is an integer specifying the size of data chunks to read at any one moment if low_mem is true. A higher number means a faster runtime but more memory consumption.
 * tmp_dir is an optional string specifying where temporary files should be written to.
 * seed is an optional integer specifying a seed to use for random processes. If set, enables code reproducibility.
