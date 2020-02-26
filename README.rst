@@ -10,10 +10,9 @@ scRNA-seq counts for the snATAC-seq profiled cells and snATAC-seq counts for the
 Cells profiled by each technique can then be analyzed together in a joint, lower dimensional space.
 
 
-The package is still under active development and function parameters will continue to change over time. A changelog of
+The package is the implementation of SingleCellFusion based on `Loompy <http://loompy.org/>`_. It is still under development and function parameters will continue to change over time. A changelog of
 SingleCellFusion_Loompy's development can be viewed
-`here <docs/changelog.rst>`_.
-
+`here <docs/changelog.rst>`_. For a lite implementation of this computational tool, please go to `SingleCellFusion <https://github.com/mukamel-lab/SingleCellFusion/>`_.
 
 Requirements
 ------------
