@@ -94,6 +94,12 @@ Authors
 Code was specifically written by `Wayne Doyle <https://github.com/wayneidoyle>`_, `Fangming Xie <f7xie@ucsd.edu>`_,
 and `Ethan Armand <earmand@ucsd.edu>`_.
 
+Further description and citation
+--------------------------------
+
+- `Luo, C. et al. Single nucleus multi-omics links human cortical cell regulatory genome diversity to disease risk variants. bioRxiv 2019.12.11.873398 (2019) doi:10.1101/2019.12.11.873398 <https://www.biorxiv.org/content/10.1101/2019.12.11.873398v1>`_
+
+- `Yao, Z. et al. An integrated transcriptomic and epigenomic atlas of mouse primary motor cortex cell types. bioRxiv 2020.02.29.970558v2 (2020) doi:10.1101/2020.02.29.970558 <https://www.biorxiv.org/content/10.1101/2019.12.11.873398v1>`_
 
 Acknowledgments
 ---------------
