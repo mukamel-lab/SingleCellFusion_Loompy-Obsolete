@@ -1,4 +1,6 @@
-SingleCellFusion_Loompy
+NOTE: This repository has been superseded by <https://github.com/mukamel-lab/SingleCellFusion>
+
+SingleCellFusion_Loompy-Obsolete
 ================
 
 SingleCellFusion is a package for computational integration and analysis of single cell multiomics data sets, including
