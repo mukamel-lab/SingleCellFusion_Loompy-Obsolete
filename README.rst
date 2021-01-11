@@ -1,4 +1,4 @@
-NOTE: This repository has been superseded by <https://github.com/mukamel-lab/SingleCellFusion>
+NOTE: This repository has been superseded by https://github.com/mukamel-lab/SingleCellFusion
 
 SingleCellFusion_Loompy-Obsolete
 ================
